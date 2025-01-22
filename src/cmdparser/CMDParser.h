@@ -5,4 +5,6 @@
 
 bool parsecmd(int *argc, char* argv[]);
 
+bool get_test();
+
 #endif

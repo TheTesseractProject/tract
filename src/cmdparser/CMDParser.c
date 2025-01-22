@@ -6,6 +6,8 @@
 
 #include "constants.h"
 
+bool test = false;
+
 bool parsecmd(int *argc, char* argv[]) {
     
     if (*argc <= 1) {
@@ -17,6 +19,7 @@ bool parsecmd(int *argc, char* argv[]) {
 
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
             printf("Tract ver: %s\n", TRACT_VERSION);
+            test = true;
             return false;
         } else
         
@@ -34,4 +37,8 @@ bool parsecmd(int *argc, char* argv[]) {
 
     return false;
 
+}
+
+bool get_test() {
+    return test;
 }

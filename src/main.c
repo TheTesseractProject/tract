@@ -2,5 +2,7 @@
 #include "cmdparser/CMDParser.h"
 
 int main(int argc, char* argv[]) {
-    return parsecmd(&argc, argv);
+    bool cmdresult = parsecmd(&argc, argv);
+    printf("%d\n", get_test());
+    return cmdresult;
 }
