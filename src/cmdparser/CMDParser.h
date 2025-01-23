@@ -1,10 +1,8 @@
 #ifndef CMDPARSER_H
 #define CMDPARSER_H
 
-#include <stdbool.h>
+#include "typedefs.h"
 
-bool parsecmd(int *argc, char* argv[]);
-
-bool get_test();
+CMDdata parsecmd(int *argc, char* argv[]);
 
 #endif

@@ -1,44 +1,40 @@
 #include "CMDParser.h"
-
-#include <stdio.h>
-#include <stdbool.h>
-#include <string.h>
-
 #include "constants.h"
 
-bool test = false;
+#include <stdio.h>
+#include <string.h>
 
-bool parsecmd(int *argc, char* argv[]) {
+CMDdata parsecmd(int *argc, char* argv[]) {
+
+    CMDdata data = {0, 0, 0, 0, 0};
     
     if (*argc <= 1) {
         printf(HELP_TEXT);
-        return false;
+        return data;
     }
 
     for (unsigned i = 1; i < *argc; i++) {
 
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
-            printf("Tract ver: %s\n", TRACT_VERSION);
-            test = true;
-            return false;
+            printf(VER_NL);
+            data.version_flag = true;
+            break;
         } else
         
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printf(HELP_TEXT);
-            return false;
+            data.help_flag = true;
+            break;
         }
         
         else {
             fprintf(stderr, BAD_ARGUMENT, argv[i]);
-            return true;
+            data.error = true;
+            break;
         }
 
     }
 
-    return false;
+    return data;
 
-}
-
-bool get_test() {
-    return test;
 }
