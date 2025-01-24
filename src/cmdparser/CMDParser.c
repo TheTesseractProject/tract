@@ -15,13 +15,13 @@ CMDdata parsecmd(int *argc, char* argv[]) {
 
     for (unsigned i = 1; i < *argc; i++) {
 
-        if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
+        if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
             printf(VER_NL);
             data.version_flag = true;
             break;
         } else
         
-        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf(HELP_TEXT);
             data.help_flag = true;
             break;
