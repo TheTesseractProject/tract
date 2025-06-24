@@ -1,8 +1,8 @@
-#include "cmd_parser.h"
-#include "constants.h"
-
 #include <stdio.h>
 #include <string.h>
+
+#include "cmd_parser.h"
+#include "constants.h"
 
 cmd_data parse_cmd(int *argc, char* argv[]) {
     cmd_data data;
