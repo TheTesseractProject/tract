@@ -1,16 +1,32 @@
 #include <stdio.h>
-#include "cmdparser/CMDParser.h"
+
 #include "constants.h"
+#include "cmd_parser/cmd_parser.h"
+#include "file_check/file_check.h"
 
 int main(int argc, char* argv[]) {
-    CMDdata cmdresult = parsecmd(&argc, argv);
+    cmd_data cmdresult = parse_cmd(&argc, argv);
 
-    if (cmdresult.error) {
-        fprintf(stderr, TRACT ARGS_ERROR);
-        return 1;
+    switch (cmdresult.action) {
+        case ERROR:
+            fputs(ARGS_ERROR, stderr);
+            return 1;
+        case HELP:
+            fputs(HELP_TEXT, stdout);
+            break;
+        case VERSION:
+            fputs(VER "\n", stdout);
+            break;
+        case BUILD:
+            if (!file_check(cmdresult.path)) {
+                fputs(ACCESS_ERROR, stderr);
+                return 1;
+            }
+            
+            fputs(BUILD_PLACEHOLDER, stdout);
+            fputs(TRACT_COLON OK, stdout);
+            break;
     }
-
-    //printf(TRACT OK_NL);
 
     return 0;
 }

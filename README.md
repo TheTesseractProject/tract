@@ -6,12 +6,12 @@
 
 Build with CLANG (***recommended***):
 ```bash
-export CC=clang && export CXX=clang++ && cmake -S . -B build && cmake --build build
+export CC=clang && export CXX=clang++ && cmake -S . -B build -G Ninja && cmake --build build
 ```
 
 Build with GCC:
 ```bash
-export CC=gcc && export CXX=g++ && cmake -S . -B build && cmake --build build
+export CC=gcc && export CXX=g++ && cmake -S . -B build -G Ninja && cmake --build build
 ```
 
 Clean build:
