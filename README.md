@@ -4,6 +4,9 @@
 
 # TRACT
 
+> [!NOTE]
+> Make sure, that you have installed **clang** *(or gcc)*, **cmake** and **ninja**.
+
 Build with CLANG (***recommended***):
 ```bash
 export CC=clang && export CXX=clang++ && cmake -S . -B build -G Ninja && cmake --build build
@@ -16,7 +19,7 @@ export CC=gcc && export CXX=g++ && cmake -S . -B build -G Ninja && cmake --build
 
 Clean build:
 ```bash
-rm -r build bin
+rm -rf bin/ build/
 ```
 
 Run:
