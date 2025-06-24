@@ -19,7 +19,7 @@ export CC=gcc && export CXX=g++ && cmake -S . -B build -G Ninja && cmake --build
 
 Clean build:
 ```bash
-rm -rf build bin
+rm -rf bin/ build/
 ```
 
 Run:
