@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <string.h>
-#include <stdbool.h>
 
 #include "cmd_parser.h"
 #include "constants.h"
