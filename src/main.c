@@ -4,10 +4,13 @@
 #include "cmd_parser/cmd_parser.h"
 #include "file_check/file_check.h"
 
-int main(int argc, char* argv[]) {
-    cmd_data cmdresult = parse_cmd(&argc, argv);
+#include <unistd.h>
+#include "tesseract_animation/render/render_text.h"
 
-    switch (cmdresult.action) {
+int main(int argc, char* argv[]) {
+    cmd_data cmd_result = parse_cmd(&argc, argv);
+
+    switch (cmd_result.action) {
         case ERROR:
             fputs(ARGS_ERROR, stderr);
             return 1;
@@ -18,13 +21,18 @@ int main(int argc, char* argv[]) {
             fputs(VER "\n", stdout);
             break;
         case BUILD:
-            if (!file_check(cmdresult.path)) {
+            if (!file_check(cmd_result.path)) {
                 fputs(ACCESS_ERROR, stderr);
                 return 1;
             }
             
             fputs(BUILD_PLACEHOLDER, stdout);
+            fputs(cmd_result.output, stdout);
+            putchar('\n');
             fputs(TRACT_COLON OK, stdout);
+            break;
+        case ANIMATION:
+            fputs("<ANIMATION>\n", stdout);
             break;
     }
 

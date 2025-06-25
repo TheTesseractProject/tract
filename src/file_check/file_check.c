@@ -5,7 +5,7 @@
 #include "file_check.h"
 #include "constants.h"
 
-bool file_exists(const char* path) {
+bool file_access(const char* path) {
     return access(path, F_OK) == 0;
 }
 
@@ -21,18 +21,14 @@ bool has_valid_extension(const char* path) {
 }
 
 bool file_check(const char* path) {
-    if (path[0] == '-') {
-        fputs(BUILD_FILE_NOT_SPECIFIED, stderr);
-        return false;
-    }
 
-    if (!file_exists(path)) {
-        fprintf(stderr, FILE_NOT_EXIST, path);
+    if (!file_access(path)) {
+        fprintf(stderr, FILE_UNABLE_ACCESS_MSG, path);
         return false;
     }
     
     if (!has_valid_extension(path)) {
-        fprintf(stderr, INVALID_EXTENSION, path);
+        fprintf(stderr, INVALID_EXTENSION_MSG, path);
         return false;
     }
     
