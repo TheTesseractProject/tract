@@ -5,7 +5,7 @@
 
 #include "render_text.h"
 
-char rand_symbol() {
+char rand_symbol(void) {
     return (char)(33 + (rand() % 94));
 }
 
@@ -13,13 +13,24 @@ void render_text(const char* text, unsigned short offset, bool reverse) {
     if (text == NULL) {
         return;
     }
+    
     unsigned short text_size = strlen(text) + 1;
 
     char text_buffer[text_size];
     text_buffer[text_size - 1] = '\0';
 
     for (unsigned short i = 0; i < text_size - 1; ++i) {
-        if (text[i] == '\n') {
+        if (text[i] == '\033' && i + 1 < text_size - 1 && text[i + 1] == '[') {
+            unsigned short j = i;
+            while (j < text_size - 1 && text[j] != 'm') {
+                text_buffer[j] = text[j];
+                ++j;
+            }
+            if (j < text_size - 1) {
+                text_buffer[j] = text[j];
+            }
+            i = j;
+        } else if (text[i] == '\n') {
             text_buffer[i] = '\n';
         } else if (i == offset || text[i] == ' ') {
             text_buffer[i] = ' ';

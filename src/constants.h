@@ -25,6 +25,12 @@
 
 #define BUILD_PLACEHOLDER "<BUILD PLACEHOLDER>\n"
 
-#define HELP_TEXT "\n" COLOR_BRIGHT_WHITE "About" COLOR_RESET "\n" TRACT " - The " COLOR_BRIGHT_WHITE "Tesseract" COLOR_RESET " compiler.\nLightning-fast compilation and\naggressive optimization for peak performance.\nMade with " COLOR_BRIGHT_RED "LOVE" COLOR_RESET " by " COLOR_BRIGHT_WHITE "@pka_human" COLOR_RESET ".\n\n" COLOR_BRIGHT_WHITE "Available options" COLOR_RESET "\n-v, --version: Show version\n-h, --help: Show help text\n-b, --build <path>: Build the program (or just specify the path without arguments)\n-o, --output <path>: Specify the path to the compiled file\n\n" COLOR_BRIGHT_WHITE "Usage" COLOR_RESET "\n" COLOR_GRAY "tract <args>" COLOR_RESET "\n\n"
+#define HELP_TEXT "\n" COLOR_BRIGHT_WHITE "About" COLOR_RESET "\n" TRACT " - The " COLOR_BRIGHT_WHITE "Tesseract" COLOR_RESET " compiler.\nLightning-fast compilation and\naggressive optimization for peak performance.\nMade with " COLOR_BRIGHT_RED "LOVE" COLOR_RESET " by " COLOR_BRIGHT_WHITE "@pka_human" COLOR_RESET ".\n\n" COLOR_BRIGHT_WHITE "Available options" COLOR_RESET "\n-v, --version: Show version\n-h, --help: Show help text\n-b, --build <path>: Build the program (or just specify the path without arguments)\n-o, --output <path>: Specify the path to the compiled file\n--tesseract: Beautiful ASCII 4D tesseract animation\n\n" COLOR_BRIGHT_WHITE "Usage" COLOR_RESET "\n" COLOR_GRAY "tract <args>" COLOR_RESET "\n\n"
+
+#define TESSERACT_ANIMATION_TEXT TRACT " BUILD TOOL FOR " COLOR_BRIGHT_WHITE "TESSERACT" COLOR_RESET "\nVersion: " COLOR_BRIGHT_WHITE VER COLOR_RESET ", UwU!"
+#define TESSERACT_CHAR_ASPECT_TEXT "Use left/right arrow keys to adjust\nthe width until it looks like a square.\nPress Enter when it's right.\n\n"
+#define TESSERACT_TOO_SMALL "Too small :(\n"
+#define TESSERACT_GRADIENT "@&Xx+;:,. "
+
 
 #endif

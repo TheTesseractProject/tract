@@ -15,8 +15,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
         return data;
     }
 
-
-    for (unsigned i = 1; i < *argc; i++) {
+    for (int i = 1; i < *argc; ++i) {
         if (argv[i][0] != '-') {
             if (data.path == NULL) {
                 data.path = argv[i];
@@ -44,7 +43,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 return data;
             } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
                 data.path = argv[i + 1];
-                i++;
+                ++i;
                 continue;
             } else {
                 fputs(BUILD_FILE_NOT_SPECIFIED_MSG, stderr);
@@ -58,7 +57,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 return data;
             } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
                 data.output = argv[i + 1];
-                i++;
+                ++i;
                 continue;
             } else {
                 fputs(OUTPUT_FILE_NOT_SPECIFIED_MSG, stderr);
