@@ -1,10 +1,20 @@
+#include <stdio.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
 
 #include "tesseract_animation.h"
 #include "constants.h"
-#include "render/render_tesseract.h"
+#include "render/render_tesseract/render_tesseract.h"
+#include "terminal_utils/terminal_utils.h"
+
+#ifdef _WIN32
+#include <conio.h>
+#include <windows.h>
+#else
+#include <termios.h>
+#include <fcntl.h>
+#endif
 
 void tesseract_animation(void) {
     PIXEL_ASPECT = get_char_aspect_ratio();
@@ -32,6 +42,15 @@ void tesseract_animation(void) {
 
     bool reverse = false;
     unsigned short offset = 1;
+
+#ifndef _WIN32
+    struct termios oldt, newt;
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK);
+#endif
 
     while (1) {
         current_time = get_microseconds();
@@ -67,7 +86,26 @@ void tesseract_animation(void) {
 
         ++offset;
 
+        // --- Keypress check for quitting ---
+        int ch = -1;
+#ifdef _WIN32
+        if (_kbhit()) {
+            ch = _getch();
+        }
+#else
+        ch = getchar();
+#endif
+        if (ch == 'q' || ch == 'Q') {
+            break;
+        }
     }
 
-    //free_all();
+#ifndef _WIN32
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+#endif
+
+    clear_terminal();
+    fputs(TESSERACT_ANIMATION_END, stdout);
+
+    free_all();
 }

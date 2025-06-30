@@ -38,9 +38,6 @@ extern unsigned previous_cols;
 
 // Utility functions
 long long get_microseconds(void);
-void get_terminal_size(unsigned *rows, unsigned *cols);
-void clear_terminal(void);
-float get_char_aspect_ratio(void);
 
 // Screen management functions
 void set_pixel(int x, int y, uint8_t value);
