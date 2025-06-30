@@ -10,6 +10,8 @@
 #define ERROR_MSG COLOR_BRIGHT_RED "Error" COLOR_RESET ": "
 #define OK COLOR_GREEN "Ok" COLOR_RESET "\n"
 
+#define VALID_EXTENSIONS ".t", ".tes", ".tt", ".T", ".TES", ".TT"
+
 #define BAD_ARGUMENT_MSG ERROR_MSG "'" COLOR_RED "%s" COLOR_RESET "'" COLOR_RESET " is not a recognized argument. See '-h' for help\n"
 #define FILE_UNABLE_ACCESS_MSG ERROR_MSG "Unable to access file '" COLOR_RED "%s" COLOR_RESET "'\n"
 #define INVALID_EXTENSION_MSG ERROR_MSG "File '" COLOR_RED "%s" COLOR_RESET "' does not have a valid extension (.t, .tes, or .tt)\n"
@@ -72,6 +74,5 @@ COLOR_GRAY "tract <args>" COLOR_RESET "\n\n"
 "       '-_~-,       ` `   ./`\n"\
 "          `'{_            )\n"\
 "              ^^\\..___,.--`\n\n"
-
 
 #endif
