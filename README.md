@@ -53,17 +53,23 @@ Hello there!
 # Clone the repository
 git clone https://github.com/pka-human/tract.git
 cd tract
+```
 
+```bash
 # Build with Clang and Ninja (recommended)
 export CC=clang && export CXX=clang++
 cmake -S . -B build -G Ninja
 cmake --build build
+```
 
+```bash
 # Build with GCC
 export CC=gcc && export CXX=g++
 cmake -S . -B build -G Ninja
 cmake --build build
+```
 
+```bash
 # Run the application
 ./bin/tract --help
 ```
