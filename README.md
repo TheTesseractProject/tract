@@ -31,7 +31,6 @@ Hello there!
 
 - **Fast Compilation**: Optimized for speed and efficiency
 - **Cross-platform**: Works on Linux, macOS, and Windows
-- **Beautiful UI**: ASCII art tesseract animation
 - **Modern C**: Written in C11 with best practices
 - **Error Handling**: Comprehensive error reporting
 
