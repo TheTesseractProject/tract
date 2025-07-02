@@ -1,3 +1,5 @@
+#include "render_tesseract.h"
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -6,8 +8,7 @@
 #include <math.h>
 #include <string.h>
 
-#include "render_tesseract.h"
-#include "tesseract_animation/render/render_text/render_text.h"
+#include "render_text.h"
 #include "constants.h"
 #include "terminal_utils/terminal_utils.h"
 

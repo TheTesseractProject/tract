@@ -1,8 +1,10 @@
-#include <string.h>
-#include <unistd.h>
-#include <stdio.h>
-
 #include "file_check.h"
+
+#include <string.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <unistd.h>
+
 #include "constants.h"
 
 bool file_access(const char* path) {
@@ -25,16 +27,21 @@ bool has_valid_extension(const char* path) {
     return false;
 }
 
-bool file_check(const char* path) {
+FILE* file_open(const char* path) {
     if (!file_access(path)) {
-        fprintf(stderr, FILE_UNABLE_ACCESS_MSG, path);
-        return false;
+        fprintf(stderr, ERR_FILE_UNABLE_ACCESS_MSG, path);
+        return NULL;
     }
     
     if (!has_valid_extension(path)) {
-        fprintf(stderr, INVALID_EXTENSION_MSG, path);
-        return false;
+        fprintf(stderr, ERR_INVALID_EXTENSION_MSG, path);
+        return NULL;
     }
     
-    return true;
+    FILE* file = fopen(path, "r");
+    if (!file) {
+        fprintf(stderr, ERR_FILE_UNABLE_ACCESS_MSG, path);
+        return NULL;
+    }
+    return file;
 }

@@ -1,8 +1,8 @@
 #ifndef FILE_CHECK_H
 #define FILE_CHECK_H
 
-#include <stdbool.h>
+#include <stdio.h>
 
-bool file_check(const char* path);
+FILE* file_open(const char* path);
 
 #endif

@@ -1,11 +1,12 @@
+#include "tesseract_animation.h"
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
 
-#include "tesseract_animation.h"
 #include "constants.h"
-#include "render/render_tesseract/render_tesseract.h"
+#include "render/render_tesseract.h"
 #include "terminal_utils/terminal_utils.h"
 
 #ifdef _WIN32

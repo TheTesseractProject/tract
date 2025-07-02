@@ -12,20 +12,23 @@
 
 #define VALID_EXTENSIONS ".t", ".tes", ".tt", ".T", ".TES", ".TT"
 
-#define BAD_ARGUMENT_MSG ERROR_MSG "'" COLOR_RED "%s" COLOR_RESET "'" COLOR_RESET " is not a recognized argument. See '-h' for help\n"
-#define FILE_UNABLE_ACCESS_MSG ERROR_MSG "Unable to access file '" COLOR_RED "%s" COLOR_RESET "'\n"
-#define INVALID_EXTENSION_MSG ERROR_MSG "File '" COLOR_RED "%s" COLOR_RESET "' does not have a valid extension (.t, .tes, or .tt)\n"
-#define BUILD_FILE_NOT_SPECIFIED_MSG ERROR_MSG "Build file not specified\n"
-#define OUTPUT_FILE_NOT_SPECIFIED_MSG ERROR_MSG "Output file not specified\n"
-#define MULTIPLE_BUILD_MSG ERROR_MSG "Attempt to specify multiple files for build\n"
-#define MULTIPLE_OUTPUT_MSG ERROR_MSG "Attempt to specify multiple files for output\n"
+#define BUILDING_MSG "[%d/%d] Building '" COLOR_BRIGHT_WHITE "%s" COLOR_RESET "'... "
+#define BUILDING_BUILT_MSG "Built to '" COLOR_BRIGHT_WHITE "%s" COLOR_RESET "'\n"
 
-#define AN_ERROR_OCCURRED TRACT_COLON COLOR_RED "An error occurred while "
-#define ARGS_ERROR AN_ERROR_OCCURRED "parsing arguments" COLOR_RESET "\n"
-#define ACCESS_ERROR AN_ERROR_OCCURRED "accessing the file" COLOR_RESET "\n"
-#define BUILD_ERROR AN_ERROR_OCCURRED "building the file" COLOR_RESET "\n"
+#define ERR_BAD_ARGUMENT_MSG ERROR_MSG "'" COLOR_RED "%s" COLOR_RESET "'" COLOR_RESET " is not a recognized argument. See '-h' for help\n"
+#define ERR_FILE_UNABLE_ACCESS_MSG ERROR_MSG "Unable to access file '" COLOR_RED "%s" COLOR_RESET "'\n"
+#define ERR_INVALID_EXTENSION_MSG ERROR_MSG "File '" COLOR_RED "%s" COLOR_RESET "' does not have a valid extension (.t, .tes, or .tt)\n"
+#define ERR_BUILD_FILE_NOT_SPECIFIED_MSG ERROR_MSG "Build file not specified\n"
+#define ERR_OUTPUT_FILE_NOT_SPECIFIED_MSG ERROR_MSG "Output file not specified\n"
+#define ERR_MULTIPLE_BUILD_MSG ERROR_MSG "Cannot specify multiple files for build, build a single file or the entire project directory\n"
+#define ERR_MULTIPLE_OUTPUT_MSG ERROR_MSG "Attempt to specify multiple files for output\n"
 
-#define BUILD_PLACEHOLDER "<BUILD PLACEHOLDER>\n"
+#define TRACT_AN_ERROR_OCCURRED TRACT_COLON COLOR_RED "An error occurred while "
+#define ARGS_ERROR TRACT_AN_ERROR_OCCURRED "parsing arguments" COLOR_RESET "\n"
+#define ACCESS_ERROR TRACT_AN_ERROR_OCCURRED "accessing the file" COLOR_RESET "\n"
+#define BUILD_ERROR TRACT_AN_ERROR_OCCURRED "building the file" COLOR_RESET "\n"
+
+#define TRACT_BUILD_FINISHED TRACT_COLON COLOR_GREEN "Build finished" COLOR_RESET "\n"
 
 #define HELP_TEXT "\n"\
 \
@@ -48,7 +51,7 @@ COLOR_GRAY "tract <args>" COLOR_RESET "\n\n"
 #define TESSERACT_ANIMATION_CHAR_ASPECT_TEXT "Use left/right arrow keys to adjust\nthe width until it looks like a square.\nPress Enter when it's right.\n\n"
 #define TESSERACT_ANIMATION_TOO_SMALL "Too small :(\n"
 #define TESSERACT_ANIMATION_GRADIENT "@&Xx+;:,. "
-#define TESSERACT_ANIMATION_END "\n"\
+#define TESSERACT_ANIMATION_END \
 "                            ,--.\n"\
 "                           {    }\n"\
 "                           K,   }\n"\

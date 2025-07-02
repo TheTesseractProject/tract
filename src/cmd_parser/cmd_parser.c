@@ -1,12 +1,14 @@
+#include "cmd_parser.h"
+
 #include <stdio.h>
 #include <string.h>
 
-#include "cmd_parser.h"
+#include "tesseract_types.h"
 #include "constants.h"
 
 cmd_data parse_cmd(int *argc, char* argv[]) {
     cmd_data data;
-    data.action = BUILD;
+    data.action = BUILD_FILE;
     data.path = NULL;
     data.output = NULL;
 
@@ -21,7 +23,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 data.path = argv[i];
                 continue;
             } else {
-                fprintf(stderr, BAD_ARGUMENT_MSG, argv[i]);
+                fprintf(stderr, ERR_BAD_ARGUMENT_MSG, argv[i]);
                 data.action = ERROR;
                 return data;
             }
@@ -38,7 +40,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
             return data;
         } else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--build") == 0) {
             if (data.path != NULL) {
-                fputs(MULTIPLE_BUILD_MSG, stderr);
+                fputs(ERR_MULTIPLE_BUILD_MSG, stderr);
                 data.action = ERROR;
                 return data;
             } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
@@ -46,13 +48,13 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 ++i;
                 continue;
             } else {
-                fputs(BUILD_FILE_NOT_SPECIFIED_MSG, stderr);
+                fputs(ERR_BUILD_FILE_NOT_SPECIFIED_MSG, stderr);
                 data.action = ERROR;
                 return data;
             }
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
             if (data.output != NULL) {
-                fputs(MULTIPLE_OUTPUT_MSG, stderr);
+                fputs(ERR_MULTIPLE_OUTPUT_MSG, stderr);
                 data.action = ERROR;
                 return data;
             } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
@@ -60,12 +62,12 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 ++i;
                 continue;
             } else {
-                fputs(OUTPUT_FILE_NOT_SPECIFIED_MSG, stderr);
+                fputs(ERR_OUTPUT_FILE_NOT_SPECIFIED_MSG, stderr);
                 data.action = ERROR;
                 return data;
             }
         } else {
-            fprintf(stderr, BAD_ARGUMENT_MSG, argv[i]);
+            fprintf(stderr, ERR_BAD_ARGUMENT_MSG, argv[i]);
             data.action = ERROR;
             return data;
         }
