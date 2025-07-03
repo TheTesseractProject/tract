@@ -1,11 +1,11 @@
 # TRACT - Tesseract Compiler
 
-[![GitHub Release](https://img.shields.io/github/v/release/pka-human/tract)](https://github.com/pka-human/tract/releases)
-[![GitHub Downloads](https://img.shields.io/github/downloads/pka-human/tract/total)](https://github.com/pka-human/tract/releases)
-[![GitHub code size](https://img.shields.io/github/languages/code-size/pka-human/tract)](https://github.com/pka-human/tract)
+[![GitHub Release](https://img.shields.io/github/v/release/pka-human/tract?style=plastic)](https://github.com/pka-human/tract/releases)
+[![GitHub Downloads](https://img.shields.io/github/downloads/pka-human/tract/total?style=plastic)](https://github.com/pka-human/tract/releases)
+[![GitHub code size](https://img.shields.io/github/languages/code-size/pka-human/tract?style=plastic)](https://github.com/pka-human/tract)
 [![GitHub lines of code](https://tokei.rs/b1/github/pka-human/tract)](https://github.com/pka-human/tract)
-[![CMake](https://img.shields.io/badge/CMake-3.16+-blue.svg)](https://cmake.org/)
-[![C Standard](https://img.shields.io/badge/C-11-blue.svg)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
+[![CMake](https://img.shields.io/badge/CMake-3.16+-blue.svg?style=plastic)](https://cmake.org/)
+[![C Standard](https://img.shields.io/badge/C-11-blue.svg?style=plastic)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
 
 > **TRACT** - Lightning-fast Tesseract language compiler with aggressive optimization for peak performance. Tesseract is simple but with great power.
 
