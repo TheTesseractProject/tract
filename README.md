@@ -149,7 +149,7 @@ This project is licensed under the terms specified in the [LICENSE](LICENSE) fil
 
 ## 🙏 Acknowledgments
 
-- Made with ❤️ by [@pka_human](https://github.com/TheTesseractProject)
+- Made with ❤️ by Contributors
 - Inspired by the mathematical beauty of 4D tesseracts
 - Built with modern C development practices
 
