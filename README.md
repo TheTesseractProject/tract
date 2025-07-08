@@ -1,3 +1,4 @@
+![logo](logo.png)
 # TRACT - Tesseract Compiler
 
 [![GitHub Release](https://img.shields.io/github/v/release/TheTesseractProject/tract?style=plastic)](https://github.com/TheTesseractProject/tract/releases)
