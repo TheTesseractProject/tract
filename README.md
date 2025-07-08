@@ -1,9 +1,9 @@
 # TRACT - Tesseract Compiler
 
-[![GitHub Release](https://img.shields.io/github/v/release/pka-human/tract?style=plastic)](https://github.com/pka-human/tract/releases)
-[![GitHub Downloads](https://img.shields.io/github/downloads/pka-human/tract/total?style=plastic)](https://github.com/pka-human/tract/releases)
-[![GitHub code size](https://img.shields.io/github/languages/code-size/pka-human/tract?style=plastic)](https://github.com/pka-human/tract)
-[![GitHub lines of code](https://tokei.rs/b1/github/pka-human/tract)](https://github.com/pka-human/tract)
+[![GitHub Release](https://img.shields.io/github/v/release/TheTesseractProject/tract?style=plastic)](https://github.com/TheTesseractProject/tract/releases)
+[![GitHub Downloads](https://img.shields.io/github/downloads/TheTesseractProject/tract/total?style=plastic)](https://github.com/TheTesseractProject/tract/releases)
+[![GitHub code size](https://img.shields.io/github/languages/code-size/TheTesseractProject/tract?style=plastic)](https://github.com/TheTesseractProject/tract)
+[![GitHub lines of code](https://tokei.rs/b1/github/TheTesseractProject/tract)](https://github.com/TheTesseractProject/tract)
 [![CMake](https://img.shields.io/badge/CMake-3.16+-blue.svg?style=plastic)](https://cmake.org/)
 [![C Standard](https://img.shields.io/badge/C-11-blue.svg?style=plastic)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
 
@@ -51,7 +51,7 @@ Hello there!
 ### Quick Start (Recommended)
 ```bash
 # Clone the repository
-git clone https://github.com/pka-human/tract.git
+git clone https://github.com/TheTesseractProject/tract.git
 cd tract
 ```
 
@@ -149,7 +149,7 @@ This project is licensed under the terms specified in the [LICENSE](LICENSE) fil
 
 ## 🙏 Acknowledgments
 
-- Made with ❤️ by [@pka_human](https://github.com/pka-human)
+- Made with ❤️ by [@pka_human](https://github.com/TheTesseractProject)
 - Inspired by the mathematical beauty of 4D tesseracts
 - Built with modern C development practices
 
@@ -157,7 +157,7 @@ This project is licensed under the terms specified in the [LICENSE](LICENSE) fil
 
 If you encounter any issues or have questions:
 
-1. Check the [Issues](https://github.com/pka-human/tract/issues) page
+1. Check the [Issues](https://github.com/TheTesseractProject/tract/issues) page
 2. Create a new issue with detailed information
 3. Include your system information and error messages
 
