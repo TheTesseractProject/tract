@@ -437,7 +437,7 @@ void draw(bool perspective, float fov_degrees, float zoom, const char* text, uns
     }
 
     if (previous_cols <= 38 || previous_rows <= 15) {
-        fputs(TESSERACT_ANIMATION_TOO_SMALL, stdout);
+        MSG(TESSERACT_ANIMATION_TOO_SMALL);
         return;
     }
 
@@ -461,9 +461,8 @@ void draw(bool perspective, float fov_degrees, float zoom, const char* text, uns
         }
         
         //line_buf[pos++] = '|';
-        line_buf[pos++] = '\n';
         line_buf[pos] = '\0';
-        fputs(line_buf, stdout);
+        puts(line_buf);
     }
 }
 

@@ -43,7 +43,7 @@ void clear_terminal(void) {
     Position.Y = 0;
     SetConsoleCursorPosition(hOut, Position);
 #else
-    fputs("\033[2J\033[H", stdout);
+    MSG("\033[2J\033[H");
 #endif
 }
 
@@ -74,7 +74,7 @@ float get_char_aspect_ratio(void) {
 #else
             clear_terminal();
 #endif
-            fputs(TESSERACT_ANIMATION_CHAR_ASPECT_TEXT, stdout);
+            MSG(TESSERACT_ANIMATION_CHAR_ASPECT_TEXT);
             for (unsigned i = 0; i < height; ++i) {
                 for (unsigned j = 0; j < width; ++j) {
                     putchar((i == 0 || i == height-1 || j == 0 || j == width-1) ? '@' : '.');

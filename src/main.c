@@ -12,21 +12,21 @@ int main(int argc, char *argv[]) {
 
     switch (cmd_result.action) {
         case ERROR: {
-            fputs(ARGS_ERROR, stderr);
+            ERR(TRACT_ARGS_ERROR);
             return 1;
         }
         case HELP: {
-            fputs(HELP_TEXT, stdout);
+            MSG(HELP_TEXT);
             break;
         }
         case VERSION: {
-            fputs(VER "\n", stdout);
+            MSG(VER "\n");
             break;
         }
         case BUILD_FILE: {
             FILE *input_file = file_open(cmd_result.path);
             if (!input_file) {
-                fputs(ACCESS_ERROR, stderr);
+                ERR(TRACT_ACCESS_ERROR);
                 return 1;
             }
 
@@ -34,11 +34,11 @@ int main(int argc, char *argv[]) {
             fclose(input_file);
 
             if (!build_success) {
-                fputs(BUILD_ERROR, stderr);
+                ERR(TRACT_BUILD_ERROR);
                 return 1;
             }
 
-            fputs(TRACT_BUILD_FINISHED, stdout);
+            MSG(TRACT_BUILD_FINISHED);
             break;
         }
         case ANIMATION: {

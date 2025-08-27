@@ -23,7 +23,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 data.path = argv[i];
                 continue;
             } else {
-                fprintf(stderr, ERR_BAD_ARGUMENT_MSG, argv[i]);
+                fprintf(stderr, ERR_BAD_ARGUMENT, argv[i]);
                 data.action = ERROR;
                 return data;
             }
@@ -40,7 +40,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
             return data;
         } else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--build") == 0) {
             if (data.path != NULL) {
-                fputs(ERR_MULTIPLE_BUILD_MSG, stderr);
+                ERR(ERR_MULTIPLE_BUILD);
                 data.action = ERROR;
                 return data;
             } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
@@ -48,13 +48,13 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 ++i;
                 continue;
             } else {
-                fputs(ERR_BUILD_FILE_NOT_SPECIFIED_MSG, stderr);
+                ERR(ERR_BUILD_FILE_NOT_SPECIFIED);
                 data.action = ERROR;
                 return data;
             }
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
             if (data.output != NULL) {
-                fputs(ERR_MULTIPLE_OUTPUT_MSG, stderr);
+                ERR(ERR_MULTIPLE_OUTPUT);
                 data.action = ERROR;
                 return data;
             } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
@@ -62,12 +62,12 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 ++i;
                 continue;
             } else {
-                fputs(ERR_OUTPUT_FILE_NOT_SPECIFIED_MSG, stderr);
+                ERR(ERR_OUTPUT_FILE_NOT_SPECIFIED);
                 data.action = ERROR;
                 return data;
             }
         } else {
-            fprintf(stderr, ERR_BAD_ARGUMENT_MSG, argv[i]);
+            fprintf(stderr, ERR_BAD_ARGUMENT, argv[i]);
             data.action = ERROR;
             return data;
         }

@@ -29,18 +29,18 @@ bool has_valid_extension(const char* path) {
 
 FILE* file_open(const char* path) {
     if (!file_access(path)) {
-        fprintf(stderr, ERR_FILE_UNABLE_ACCESS_MSG, path);
+        fprintf(stderr, ERR_FILE_UNABLE_ACCESS, path);
         return NULL;
     }
     
     if (!has_valid_extension(path)) {
-        fprintf(stderr, ERR_INVALID_EXTENSION_MSG, path);
+        fprintf(stderr, ERR_INVALID_EXTENSION, path);
         return NULL;
     }
     
     FILE* file = fopen(path, "r");
     if (!file) {
-        fprintf(stderr, ERR_FILE_UNABLE_ACCESS_MSG, path);
+        fprintf(stderr, ERR_FILE_UNABLE_ACCESS, path);
         return NULL;
     }
     return file;

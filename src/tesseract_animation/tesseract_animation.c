@@ -106,7 +106,7 @@ void tesseract_animation(void) {
 #endif
 
     clear_terminal();
-    fputs(TESSERACT_ANIMATION_END, stdout);
+    MSG(TESSERACT_ANIMATION_END);
 
     free_all();
 }

@@ -3,6 +3,9 @@
 
 #include "colors.h"
 
+#define MSG(str) fputs(str, stdout)
+#define ERR(str) fputs(str, stderr)
+
 #define VER "alpha0.0"
 
 #define TRACT COLOR_BRIGHT_MAGENTA "TRACT" COLOR_RESET
@@ -14,21 +17,20 @@
 
 #define BUILDING_MSG "[%d/%d] Building '" COLOR_BRIGHT_WHITE "%s" COLOR_RESET "'... "
 #define BUILDING_BUILT_MSG "Built to '" COLOR_BRIGHT_WHITE "%s" COLOR_RESET "'\n"
-
-#define ERR_BAD_ARGUMENT_MSG ERROR_MSG "'" COLOR_RED "%s" COLOR_RESET "'" COLOR_RESET " is not a recognized argument. See '-h' for help\n"
-#define ERR_FILE_UNABLE_ACCESS_MSG ERROR_MSG "Unable to access file '" COLOR_RED "%s" COLOR_RESET "'\n"
-#define ERR_INVALID_EXTENSION_MSG ERROR_MSG "File '" COLOR_RED "%s" COLOR_RESET "' does not have a valid extension (.t, .tes, or .tt)\n"
-#define ERR_BUILD_FILE_NOT_SPECIFIED_MSG ERROR_MSG "Build file not specified\n"
-#define ERR_OUTPUT_FILE_NOT_SPECIFIED_MSG ERROR_MSG "Output file not specified\n"
-#define ERR_MULTIPLE_BUILD_MSG ERROR_MSG "Cannot specify multiple files for build, build a single file or the entire project directory\n"
-#define ERR_MULTIPLE_OUTPUT_MSG ERROR_MSG "Attempt to specify multiple files for output\n"
-
-#define TRACT_AN_ERROR_OCCURRED TRACT_COLON COLOR_RED "An error occurred while "
-#define ARGS_ERROR TRACT_AN_ERROR_OCCURRED "parsing arguments" COLOR_RESET "\n"
-#define ACCESS_ERROR TRACT_AN_ERROR_OCCURRED "accessing the file" COLOR_RESET "\n"
-#define BUILD_ERROR TRACT_AN_ERROR_OCCURRED "building the file" COLOR_RESET "\n"
-
 #define TRACT_BUILD_FINISHED TRACT_COLON COLOR_GREEN "Build finished" COLOR_RESET "\n"
+
+#define ERR_BAD_ARGUMENT ERROR_MSG "'" COLOR_RED "%s" COLOR_RESET "'" COLOR_RESET " is not a recognized argument. See '-h' for help\n"
+#define ERR_FILE_UNABLE_ACCESS ERROR_MSG "Unable to access file '" COLOR_RED "%s" COLOR_RESET "'\n"
+#define ERR_INVALID_EXTENSION ERROR_MSG "File '" COLOR_RED "%s" COLOR_RESET "' does not have a valid extension (.t, .tes, or .tt)\n"
+#define ERR_BUILD_FILE_NOT_SPECIFIED ERROR_MSG "Build file not specified\n"
+#define ERR_OUTPUT_FILE_NOT_SPECIFIED ERROR_MSG "Output file not specified\n"
+#define ERR_MULTIPLE_BUILD ERROR_MSG "Cannot specify multiple files for build, build a single file or the entire project directory\n"
+#define ERR_MULTIPLE_OUTPUT ERROR_MSG "Attempt to specify multiple files for output\n"
+
+#define AN_ERROR_OCCURRED_WHILE TRACT_COLON COLOR_RED "An error occurred while "
+#define TRACT_ARGS_ERROR AN_ERROR_OCCURRED_WHILE "parsing arguments" COLOR_RESET "\n"
+#define TRACT_ACCESS_ERROR AN_ERROR_OCCURRED_WHILE "accessing the file" COLOR_RESET "\n"
+#define TRACT_BUILD_ERROR AN_ERROR_OCCURRED_WHILE "building the file" COLOR_RESET "\n"
 
 #define HELP_TEXT "\n"\
 \
