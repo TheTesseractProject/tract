@@ -462,7 +462,7 @@ void draw(bool perspective, float fov_degrees, float zoom, const char* text, uns
         
         //line_buf[pos++] = '|';
         line_buf[pos] = '\0';
-        puts(line_buf);
+        MSG(line_buf);
     }
 }
 

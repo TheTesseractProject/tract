@@ -23,7 +23,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 data.path = argv[i];
                 continue;
             } else {
-                fprintf(stderr, ERR_BAD_ARGUMENT, argv[i]);
+                ERRF(ERR_BAD_ARGUMENT, argv[i]);
                 data.action = ERROR;
                 return data;
             }
@@ -67,7 +67,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
                 return data;
             }
         } else {
-            fprintf(stderr, ERR_BAD_ARGUMENT, argv[i]);
+            ERRF(ERR_BAD_ARGUMENT, argv[i]);
             data.action = ERROR;
             return data;
         }

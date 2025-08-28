@@ -14,14 +14,14 @@ bool engine_build_file(FILE *input_file, const char *input_path, const char *out
         return false;
     }
 
-    printf(BUILDING_MSG, 1, 1, input_path);
+    MSGF(BUILDING_MSG, 1, 1, input_path);
     fflush(stdout);
 
     bool parse_success = tesseract_parse(input_file);
 
     if (parse_success) {
         MSG(OK);
-        printf(BUILDING_BUILT_MSG, output_path);
+        MSGF(BUILDING_BUILT_MSG, output_path);
     }
 
     return parse_success;

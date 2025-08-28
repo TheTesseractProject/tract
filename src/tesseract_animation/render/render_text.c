@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+#include "constants.h"
+
 char rand_symbol(void) {
     return (char)(33 + (rand() % 94));
 }
@@ -41,5 +43,5 @@ void render_text(const char* text, unsigned short offset, bool reverse) {
         }
     }
 
-    printf("\033[2J\033[H%s\n", text_buffer);
+    MSGF("\033[2J\033[H%s\n", text_buffer);
 }
