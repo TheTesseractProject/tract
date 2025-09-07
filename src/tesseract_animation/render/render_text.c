@@ -7,7 +7,7 @@
 
 #include "constants.h"
 
-char rand_symbol(void) {
+static char rand_symbol(void) {
     return (char)(33 + (rand() % 94));
 }
 

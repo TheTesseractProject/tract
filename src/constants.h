@@ -3,7 +3,7 @@
 
 #include "colors.h"
 
-#define MSG(str) puts(str)
+#define MSG(str) fputs(str, stdout)
 #define MSGF(str, ...) printf(str, __VA_ARGS__)
 #define ERR(str) fputs(str, stderr)
 #define ERRF(str, ...) fprintf(stderr, str, __VA_ARGS__)

@@ -10,6 +10,9 @@
 
 > **TRACT** - Lightning-fast Tesseract language compiler with aggressive optimization for peak performance. Tesseract is simple but with great power.
 
+> [!WARNING]
+> This project is currently under active development. Features and documentation may change frequently. At the moment the language is not ready for full-fledged work, it is a prototype.
+
 ```tesseract
 TesseractClass {
     a: int;

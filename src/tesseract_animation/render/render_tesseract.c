@@ -12,21 +12,25 @@
 #include "constants.h"
 #include "terminal_utils/terminal_utils.h"
 
-const char gradient[] = TESSERACT_ANIMATION_GRADIENT;
-size_t gradient_size = sizeof(gradient) / sizeof(gradient[0]) - 1;
+// Forward declarations for static functions
+static void set_pixel(int x, int y, uint8_t value);
+static uint8_t get_pixel(int x, int y);
+
+static const char gradient[] = TESSERACT_ANIMATION_GRADIENT;
+static size_t gradient_size = sizeof(gradient) / sizeof(gradient[0]) - 1;
 
 drawing *drawings = NULL;
 drawing *drawings_buffer = NULL;
 size_t drawings_size = 0;
 
-uint8_t *screen = NULL;
-uint8_t screen_x;
-uint8_t screen_y;
+static uint8_t *screen = NULL;
+static uint8_t screen_x;
+static uint8_t screen_y;
 
 float PIXEL_ASPECT = 1.0f;
 
-unsigned previous_rows;
-unsigned previous_cols;
+static unsigned previous_rows;
+static unsigned previous_cols;
 
 long long get_microseconds(void) {
 #ifdef _WIN32
@@ -98,11 +102,11 @@ void free_all(void) {
     free(screen);
 }
 
-void clear_screen(void) {
+static void clear_screen(void) {
     memset(screen, gradient_size - 1, screen_x * screen_y * sizeof(uint8_t));
 }
 
-void reallocate_drawings(void) {
+static void reallocate_drawings(void) {
     drawings = (drawing*) realloc(drawings, (++drawings_size) * sizeof(drawing));
     if (drawings == NULL) {
         //fprintf(stderr, "Error: Failed to reallocate memory for drawings!\n");
@@ -121,7 +125,7 @@ void allocate_drawings_buffer(void) {
     }
 }
 
-Vector2 project3d2d(bool is_perspective, Vector3 point, float fov_degrees, float zoom) {
+static Vector2 project3d2d(bool is_perspective, Vector3 point, float fov_degrees, float zoom) {
     Vector2 result;
     float normalized_x, normalized_y;
     float scale;
@@ -163,7 +167,7 @@ Vector2 project3d2d(bool is_perspective, Vector3 point, float fov_degrees, float
     return result;
 }
 
-Vector3 project4d3d(bool is_perspective, Vector4 point, float fov_degrees, float zoom) {
+static Vector3 project4d3d(bool is_perspective, Vector4 point, float fov_degrees, float zoom) {
     Vector3 result;
     float scale;
 
@@ -213,7 +217,7 @@ Vector3 project4d3d(bool is_perspective, Vector4 point, float fov_degrees, float
     return result;
 }
 
-void line(Vector4 point_a, Vector4 point_b) {
+static void line(Vector4 point_a, Vector4 point_b) {
     if (point_a.x >= -100 && point_a.x <= 100 &&
         point_a.y >= -100 && point_a.y <= 100 &&
         point_a.z >= -100 && point_a.z <= 100 &&
@@ -235,7 +239,7 @@ void line(Vector4 point_a, Vector4 point_b) {
     }
 }
 
-void rotateXY(Vector4 *v, float angle) {
+static void rotateXY(Vector4 *v, float angle) {
     float cosA = cosf(angle);
     float sinA = sinf(angle);
     float x = v->x * cosA - v->y * sinA;
@@ -244,7 +248,7 @@ void rotateXY(Vector4 *v, float angle) {
     v->y = (int8_t)roundf(y);
 }
 
-void rotateXZ(Vector4 *v, float angle) {
+static void rotateXZ(Vector4 *v, float angle) {
     float cosA = cosf(angle);
     float sinA = sinf(angle);
     float x = v->x * cosA - v->z * sinA;
@@ -253,7 +257,7 @@ void rotateXZ(Vector4 *v, float angle) {
     v->z = (int8_t)roundf(z);
 }
 
-void rotateXW(Vector4 *v, float angle) {
+static void rotateXW(Vector4 *v, float angle) {
     float cosA = cosf(angle);
     float sinA = sinf(angle);
     float x = v->x * cosA - v->w * sinA;
@@ -262,7 +266,7 @@ void rotateXW(Vector4 *v, float angle) {
     v->w = (int8_t)roundf(w);
 }
 
-void rotateYZ(Vector4 *v, float angle) {
+static void rotateYZ(Vector4 *v, float angle) {
     float cosA = cosf(angle);
     float sinA = sinf(angle);
     float y = v->y * cosA - v->z * sinA;
@@ -271,7 +275,7 @@ void rotateYZ(Vector4 *v, float angle) {
     v->z = (int8_t)roundf(z);
 }
 
-void rotateYW(Vector4 *v, float angle) {
+static void rotateYW(Vector4 *v, float angle) {
     float cosA = cosf(angle);
     float sinA = sinf(angle);
     float y = v->y * cosA - v->w * sinA;
@@ -280,7 +284,7 @@ void rotateYW(Vector4 *v, float angle) {
     v->w = (int8_t)roundf(w);
 }
 
-void rotateZW(Vector4 *v, float angle) {
+static void rotateZW(Vector4 *v, float angle) {
     float cosA = cosf(angle);
     float sinA = sinf(angle);
     float z = v->z * cosA - v->w * sinA;
@@ -331,7 +335,7 @@ void rotate_world_ZW(float theta) {
     }
 }
 
-void set_2d_gradient_point(unsigned x, unsigned y, int z) {
+static void set_2d_gradient_point(unsigned x, unsigned y, int z) {
     z = z < -100 ? -100 : (z > 100 ? 100 : z);
     float normalized_z = (float)(z + 100) / 200.0f;
     size_t index = (int)(normalized_z * (gradient_size - 1));
@@ -342,7 +346,7 @@ void set_2d_gradient_point(unsigned x, unsigned y, int z) {
     }
 }
 
-void draw_line2d_with_depth(Vector2 point_a, Vector2 point_b, int8_t z_a, int8_t z_b) {
+static void draw_line2d_with_depth(Vector2 point_a, Vector2 point_b, int8_t z_a, int8_t z_b) {
     int x0 = (int)round(point_a.x);
     int y0 = (int)round(point_a.y);
     int z0 = (int)round(z_a);
@@ -462,7 +466,7 @@ void draw(bool perspective, float fov_degrees, float zoom, const char* text, uns
         
         //line_buf[pos++] = '|';
         line_buf[pos] = '\0';
-        MSG(line_buf);
+        puts(line_buf);
     }
 }
 
@@ -508,7 +512,7 @@ void tesseract(const int8_t s) {
     line((Vector4){-s,  s,  s, -s}, (Vector4){-s,  s,  s,  s});
 }
 
-void set_pixel(int x, int y, uint8_t value) {
+static void set_pixel(int x, int y, uint8_t value) {
     if (x >= 0 && x < screen_x && y >= 0 && y < screen_y) {
         screen[y * screen_x + x] = value;
     } else {
@@ -517,7 +521,7 @@ void set_pixel(int x, int y, uint8_t value) {
     }
 }
 
-uint8_t get_pixel(int x, int y) {
+static uint8_t get_pixel(int x, int y) {
     if (x >= 0 && x < screen_x && y >= 0 && y < screen_y) {
         return screen[y * screen_x + x];
     } else {

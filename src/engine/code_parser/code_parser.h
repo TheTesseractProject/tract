@@ -4,6 +4,6 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-bool tesseract_parse(FILE *input_file);
+bool tesseract_parse(char* buffer, size_t buffer_size);
 
 #endif
