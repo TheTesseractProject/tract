@@ -1,9 +1,42 @@
+/*
+    I haven't yet had time to break the code into functions and eliminate spaghetti-code, this is a working prototype of the parser in debug.log
+*/
 #include "code_parser.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdarg.h>
+
+//#include "token.h"
+
+// Bit flags for parser state
+#define FLAG_IS_TOKEN                 0     // bit 0
+#define FLAG_CAN_START_TOKEN          1     // bit 1
+#define FLAG_NO_ARGUMENTS             2     // bit 2
+#define FLAG_COMMA_BEFORE_ARGS_END    3     // bit 3
+#define FLAG_COMMA_ENCOUNTERED        4     // bit 4
+#define FLAG_PENDING_LOG_BRACE        5     // bit 5
+
+
+// Functions for bit operations
+static inline void set_flag(uint8_t* flags, uint8_t bit) {
+    *flags |= (1 << bit);
+}
+
+static inline void clear_flag(uint8_t* flags, uint8_t bit) {
+    *flags &= ~(1 << bit);
+}
+
+/*static inline void toggle_flag(uint8_t* flags, uint8_t bit) {
+    *flags ^= (1 << bit);
+}*/
+
+static inline bool check_flag(uint8_t flags, uint8_t bit) {
+    return (flags & (1 << bit)) != 0;
+}
 
 // Internal parser structure
 typedef struct {
@@ -17,12 +50,7 @@ typedef struct {
     bool parse_success;
     FILE* log;
     
-    // Flags
-    bool is_token;
-    bool can_start_token;
-    bool reduce_nesting;
-    bool no_arguments;
-    bool pending_log_brace;
+    uint8_t flags;  // Bit flags: is_token, can_start_token, reduce_nesting, no_arguments, pending_log_brace
 } parser_t;
 
 // Internal parser functions
@@ -42,52 +70,59 @@ static parser_t* parser_init(char* input, size_t input_size) {
     parser->parse_success = true;
     parser->log = NULL;
     
-    // Initialize flags
-    parser->is_token = false;
-    parser->can_start_token = true;
-    parser->reduce_nesting = false;
-    parser->no_arguments = false;
-    parser->pending_log_brace = false;
+    // Initialize flags - only can_start_token is set initially
+    parser->flags = 0;
+    set_flag(&parser->flags, FLAG_CAN_START_TOKEN);
     
     return parser;
 }
 
 static void parser_cleanup(parser_t* parser) {
-    if (parser != NULL) {
-        if (parser->log != NULL) {
-            fclose(parser->log);
-        }
-        free(parser);
+    if (parser->log != NULL) {
+        fclose(parser->log);
+    }
+    free(parser);
+}
+
+static void parser_log_indent(parser_t* parser, size_t level) {
+    for (size_t i = 0; i < level; ++i) {
+        fputc('\t', parser->log);
     }
 }
 
-static void parser_log_token(parser_t* parser, const char* token) {
-    if (parser != NULL && parser->log != NULL && token != NULL) {
-        for (size_t i = 1; i <= parser->nesting_level; ++i) {
-            putc('\t', parser->log);
-        }
-        fprintf(parser->log, "'%s' (start=%zu, end=%zu, length=%zu)\n", 
-            token, parser->start, parser->end, parser->end - parser->start + 1);
-    }
+static void parser_log_token(parser_t* parser, size_t start, size_t end) {
+    if (!parser->log) return;
+    
+    parser_log_indent(parser, parser->nesting_level);
+    size_t len = end - start + 1;
+    fprintf(parser->log, "'%.*s' (start=%zu, end=%zu, length=%zu)\n", 
+            (int)len, &parser->input[start], start, end, len);
 }
 
 static void parser_log_brace(parser_t* parser, bool opening) {
-    size_t tabs_amount = opening ? parser->nesting_level - 1 : parser->nesting_level;
-    if (parser != NULL && parser->log != NULL) {
-        for (size_t i = 1; i <= tabs_amount; ++i) {
-            putc('\t', parser->log);
-        }
-        fputs(opening ? "{\n" : "}\n", parser->log);
-    }
+    if (!parser->log) return;
+    
+    size_t level = opening ? parser->nesting_level - 1 : parser->nesting_level;
+    parser_log_indent(parser, level);
+    fputs(opening ? "{\n" : "}\n", parser->log);
 }
 
-static void parse_error(parser_t* parser, char c, size_t pos) {
-    if (parser != NULL) {
-        fprintf(stderr, "\nError: Unexpected '%c' (pos=%zu)\n", c, pos);
-        parser->parse_success = false;
+static void parser_error(parser_t* parser, const char* message, ...) {
+    if (parser->parse_success) {
+        putc('\n', stderr);
     }
-}
 
+    va_list args;
+    va_start(args, message);
+
+    fprintf(stderr, "Error at pos %zu: ", parser->pos);
+    vfprintf(stderr, message, args);
+    fputc('\n', stderr);
+
+    va_end(args);
+
+    parser->parse_success = false;
+}
 
 bool tesseract_parse(char* buffer, size_t buffer_size) {
     if (buffer == NULL) {
@@ -110,76 +145,74 @@ bool tesseract_parse(char* buffer, size_t buffer_size) {
 
     while (parser->pos < parser->input_size) {
         char c = parser->input[parser->pos];
+        size_t argument_nesting = parser->nesting_level - parser->pending_reduce_nesting;
         
         switch (c) {
-            case ' ':
-            case '\n':
-            case '\r':
-            case '\t':
-            case '\0': {
-                if (parser->is_token) {
+            case ' ': case '\n': case '\r': case '\t': case '\0': {
+                if (check_flag(parser->flags, FLAG_IS_TOKEN)) {
                     parser->end = parser->pos - 1;
-                    parser->is_token = false;
+                    clear_flag(&parser->flags, FLAG_IS_TOKEN);
                 }
 
                 break;
             }
-            case '(':
-            case ',':
-            case ';': {
-                size_t new_argument_nesting = parser->nesting_level - parser->pending_reduce_nesting;
-                if ((parser->can_start_token && !parser->no_arguments) ||
-                    (c == ';' && new_argument_nesting) ||
-                    (c == ',' && !new_argument_nesting) ||
-                    (c == '(' && parser->reduce_nesting))
-                {
-                    parse_error(parser, c, parser->pos);
-                    goto PARSE_END;
+            case '(': case ',': case ';': {
+                if ((check_flag(parser->flags, FLAG_CAN_START_TOKEN) && !check_flag(parser->flags, FLAG_NO_ARGUMENTS)) ||
+                    (c == '(' && parser->pending_reduce_nesting)) {
+                    parser_error(parser, "Unexpected '%c'", c);
+                    break;
                 }
-                parser->reduce_nesting = false;
 
-                bool is_arguments = c == '(';
+                if ((c == ';' && argument_nesting) ||
+                    (c == ',' && !argument_nesting))
+                {
+                    parser_error(parser, "Unexpected delimiter '%c', expected '%c'", c, c == ';' ? ',' : ';');
+                }
 
-                parser->is_token = false;
-                parser->can_start_token = true;
-                
-                if (parser->pending_log_brace) {
-                    parser->pending_log_brace = false;
-                    if (!parser->no_arguments) {
+                DELIMITER:
+
+                if (parser->nesting_level && c != '(') {
+                    set_flag(&parser->flags, FLAG_COMMA_ENCOUNTERED);
+                }
+
+                clear_flag(&parser->flags, FLAG_IS_TOKEN);
+                set_flag(&parser->flags, FLAG_CAN_START_TOKEN);
+
+                if (check_flag(parser->flags, FLAG_COMMA_BEFORE_ARGS_END)) {
+                    clear_flag(&parser->flags, FLAG_COMMA_BEFORE_ARGS_END);
+                    goto REDUCE_NESTING;
+                }
+
+                if (check_flag(parser->flags, FLAG_PENDING_LOG_BRACE)) {
+                    clear_flag(&parser->flags, FLAG_PENDING_LOG_BRACE);
+                    if (!check_flag(parser->flags, FLAG_NO_ARGUMENTS)) {
                         parser_log_brace(parser, true);
                     }
                 }
 
-                if (parser->no_arguments) {
-                    goto NO_ARGUMENTS;
+                if (check_flag(parser->flags, FLAG_NO_ARGUMENTS)) {
+                    goto REDUCE_NESTING;
                 }
 
                 if (!parser->end) {
-                    parser->end = parser->pos - 1;
+                    if (parser->pos > 0) {
+                        parser->end = parser->pos - 1;
+                    } else {
+                        parser->end = parser->pos;
+                    }
                 }
 
-                size_t length = parser->end - parser->start + 1;
-                char* token = (char*)malloc(length + 1);
-                
-                if (token == NULL) {
-                    fputs("\nError: Memory allocation failed\n", stderr);
-                    parser->parse_success = false;
-                    goto PARSE_END;
+                // Use improved parser_log_token: log directly from buffer, no malloc
+                if (parser->end >= parser->start && parser->log) {
+                    parser_log_token(parser, parser->start, parser->end);
                 }
 
-                // Copy token from buffer
-                memcpy(token, parser->input + parser->start, length);
-                token[length] = '\0';
-                
-                parser_log_token(parser, token);
-                free(token);
-
-                if (is_arguments) {
+                if (c == '(') {
                     parser->nesting_level++;
-                    parser->pending_log_brace = true;
+                    set_flag(&parser->flags, FLAG_PENDING_LOG_BRACE);
                 }
 
-                NO_ARGUMENTS:
+                REDUCE_NESTING:
 
                 if (parser->pending_reduce_nesting) {
                     // Comment during debug
@@ -187,53 +220,57 @@ bool tesseract_parse(char* buffer, size_t buffer_size) {
 
                     for (size_t j = 1; j <= parser->pending_reduce_nesting; ++j) {
                         parser->nesting_level--;
-                        if (!parser->no_arguments) {
+                        if (!check_flag(parser->flags, FLAG_NO_ARGUMENTS)) {
                             parser_log_brace(parser, false);
                         } else {
-                            parser->no_arguments = false;
+                            clear_flag(&parser->flags, FLAG_NO_ARGUMENTS);
                         }
                     }
 
                     parser->pending_reduce_nesting = 0;
                 }
-                
+
                 break;
             }
             case ')': {
-                if (parser->nesting_level - parser->pending_reduce_nesting) {
+                if (check_flag(parser->flags, FLAG_IS_TOKEN)) {
+                    parser->end = parser->pos - 1;
+                    clear_flag(&parser->flags, FLAG_IS_TOKEN);
+                }
+
+                if (argument_nesting) {
                     parser->pending_reduce_nesting++;
                 } else {
-                    parse_error(parser, c, parser->pos);
-                    goto PARSE_END;
+                    parser_error(parser, "Unexpected '%c' at position %zu", c, parser->pos);
+                    break;
                 }
 
-                if (parser->is_token) {
-                    parser->end = parser->pos - 1;
-                    parser->is_token = false;
+                if (check_flag(parser->flags, FLAG_COMMA_ENCOUNTERED)) {
+                    parser_error(parser, "Unexpected delimiter before end of arguments");
+                    clear_flag(&parser->flags, FLAG_COMMA_ENCOUNTERED);
+                    clear_flag(&parser->flags, FLAG_CAN_START_TOKEN);
+                    set_flag(&parser->flags, FLAG_COMMA_BEFORE_ARGS_END);
+                } else if (check_flag(parser->flags, FLAG_CAN_START_TOKEN)) {
+                    clear_flag(&parser->flags, FLAG_CAN_START_TOKEN);
+                    set_flag(&parser->flags, FLAG_NO_ARGUMENTS);
                 }
-
-                if (parser->can_start_token) {
-                    parser->no_arguments = true;
-                }
-
-                parser->reduce_nesting = true;
 
                 break;
             }
             default: {
-                if (!parser->is_token) {
-                    if (!parser->can_start_token) {
-                        if (parser->nesting_level) {
-                            fprintf(stderr, "\nError: ',' expected (pos=%zu)\n", parser->pos);
+                if (!check_flag(parser->flags, FLAG_IS_TOKEN)) {
+                    if (!check_flag(parser->flags, FLAG_CAN_START_TOKEN)) {
+                        if (argument_nesting) {
+                            parser_error(parser, "',' expected before new token");
                         } else {
-                            fprintf(stderr, "\nError: ';' expected (pos=%zu)\n", parser->pos);
+                            parser_error(parser, "';' expected before new token");
                         }
-
-                        parser->parse_success = false;
-                        goto PARSE_END;
+                        parser->pos--;
+                        goto DELIMITER;
                     }
-                    parser->is_token = true;
-                    parser->can_start_token = false;
+                    set_flag(&parser->flags, FLAG_IS_TOKEN);
+                    clear_flag(&parser->flags, FLAG_CAN_START_TOKEN);
+                    clear_flag(&parser->flags, FLAG_COMMA_ENCOUNTERED);
                     parser->start = parser->pos;
                     parser->end = 0;
                 }
@@ -244,17 +281,20 @@ bool tesseract_parse(char* buffer, size_t buffer_size) {
         parser->pos++;
     }
     
-    if (!parser->can_start_token) {
-        fprintf(stderr, "\nError: Expected ';' before end of file\n");
-        parser->parse_success = false;
+    if (!check_flag(parser->flags, FLAG_CAN_START_TOKEN)) {
+        parser->pos--;
+        parser_error(parser, "Expected delimiter before end of file");
+        goto DELIMITER;
     }
 
     if (parser->nesting_level) {
-        fprintf(stderr, "\nError: Unterminated argument list detected at end of file (nesting_level=%zu)\n", parser->nesting_level);
-        parser->parse_success = false;
+        parser->pos--;
+        parser_error(parser, "Unterminated argument list detected at end of file");
+        parser->pending_reduce_nesting = parser->nesting_level;
+        goto REDUCE_NESTING;
     }
-    
-    PARSE_END:
+
+    //PARSE_END:
     result = parser->parse_success;
     parser_cleanup(parser);
     

@@ -43,8 +43,8 @@ Hello there!
 
 ### Build Dependencies
 - **CMake** 3.16 or higher
-- **C Compiler**: GCC 4.9+ or Clang 3.5+
-- **Ninja** (recommended) or Make
+- **C Compiler**: Clang 3.5+ (recommended) or GCC 4.9+
+- **Build System**: Ninja (recommended) or Make
 
 ### Runtime Dependencies
 - **POSIX-compliant terminal** (for animation feature)

@@ -1,22 +1,8 @@
-#ifndef TESSERACT_TYPES_H
-#define TESSERACT_TYPES_H
+#ifndef TOKEN_H
+#define TOKEN_H
 
 #include <stdint.h>
 #include <stddef.h>
-
-typedef enum {
-    ERROR,
-    HELP,
-    VERSION,
-    BUILD_FILE,
-    ANIMATION
-} cmd_action;
-
-typedef struct {
-    cmd_action action;
-    char* path;
-    char* output;
-} cmd_data;
 
 typedef enum {
     TES_FUNCTION,

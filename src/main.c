@@ -1,7 +1,6 @@
 #include <stdio.h>
 
 #include "constants.h"
-#include "tesseract_types.h"
 #include "cmd_parser/cmd_parser.h"
 #include "tesseract_animation/tesseract_animation.h"
 #include "file_check/file_check.h"

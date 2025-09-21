@@ -1,7 +1,19 @@
 #ifndef CMD_PARSER_H
 #define CMD_PARSER_H
 
-#include "tesseract_types.h"
+typedef enum {
+    ERROR,
+    HELP,
+    VERSION,
+    BUILD_FILE,
+    ANIMATION
+} cmd_action;
+
+typedef struct {
+    cmd_action action;
+    char* path;
+    char* output;
+} cmd_data;
 
 cmd_data parse_cmd(int *argc, char* argv[]);
 

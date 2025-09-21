@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "tesseract_types.h"
 #include "constants.h"
 
 cmd_data parse_cmd(int *argc, char* argv[]) {
