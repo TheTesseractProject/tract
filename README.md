@@ -7,6 +7,7 @@
 [![GitHub lines of code](https://tokei.rs/b1/github/TheTesseractProject/tract)](https://github.com/TheTesseractProject/tract)
 [![CMake](https://img.shields.io/badge/CMake-3.16+-blue.svg?style=plastic)](https://cmake.org/)
 [![C Standard](https://img.shields.io/badge/C-11-blue.svg?style=plastic)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/TheTesseractProject/tract)
 
 > **TRACT** - Lightning-fast Tesseract language compiler with aggressive optimization for peak performance. Tesseract is simple but with great power.
 
