@@ -6,7 +6,6 @@
 #include "code_parser/code_parser.h"
 #include "buffer_manager/buffer_manager.h"
 #include "constants.h"
-//#include "tesseract_types.h"
 
 bool engine_build_file(FILE *input_file, const char *input_path, const char *output_path) {
     if (!input_file) {
