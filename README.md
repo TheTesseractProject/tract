@@ -44,7 +44,7 @@ Hello there!
 
 ### Build Dependencies
 - **CMake** 3.16 or higher
-- **C Compiler**: Clang 18 and later (recommended) or GCC 15 and later
+- **C Compiler**: Clang 18 or higher (recommended) or GCC 15 or higher
 - **Build System**: Ninja (recommended) or Make
 
 ### Runtime Dependencies
