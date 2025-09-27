@@ -6,7 +6,7 @@
 [![GitHub code size](https://img.shields.io/github/languages/code-size/TheTesseractProject/tract?style=plastic)](https://github.com/TheTesseractProject/tract)
 [![GitHub lines of code](https://tokei.rs/b1/github/TheTesseractProject/tract)](https://github.com/TheTesseractProject/tract)
 [![CMake](https://img.shields.io/badge/CMake-3.16+-blue.svg?style=plastic)](https://cmake.org/)
-[![C Standard](https://img.shields.io/badge/C-11-blue.svg?style=plastic)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
+[![C Standard](https://img.shields.io/badge/C-23-blue.svg?style=plastic)](https://en.wikipedia.org/wiki/C23_(C_standard_revision))
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/TheTesseractProject/tract)
 
 > **TRACT** - Lightning-fast Tesseract language compiler with aggressive optimization for peak performance. Tesseract is simple but with great power.
@@ -37,7 +37,7 @@ Hello there!
 
 - **Fast Compilation**: Optimized for speed and efficiency
 - **Cross-platform**: Works on Linux, macOS, and Windows
-- **Modern C**: Written in C11 with best practices
+- **Modern C**: Written in C23 with best practices
 - **Error Handling**: Comprehensive error reporting
 
 ## 📋 Requirements
@@ -126,7 +126,7 @@ rm -rf bin/ build/
 ### Code Style
 
 This project follows the following coding standards:
-- **C11 Standard** compliance
+- **C23 Standard** compliance
 - **4-space indentation** (no tabs)
 - **Snake_case** for functions and variables
 - **UPPER_CASE** for constants and macros

@@ -1,8 +1,5 @@
-#ifndef FILE_CHECK_H
-#define FILE_CHECK_H
+#pragma once
 
 #include <stdio.h>
 
 FILE* file_open(const char* path);
-
-#endif

@@ -1,6 +1,3 @@
-#ifndef TESSERACT_ANIMATION_H
-#define TESSERACT_ANIMATION_H
+#pragma once
 
 void tesseract_animation(void);
-
-#endif

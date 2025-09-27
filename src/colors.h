@@ -1,5 +1,4 @@
-#ifndef COLORS_H
-#define COLORS_H
+#pragma once
 
 #define COLOR_BLACK "\033[30m"
 #define COLOR_RED "\033[31m"
@@ -18,5 +17,3 @@
 #define COLOR_BRIGHT_MAGENTA "\033[1;35m"
 #define COLOR_BRIGHT_WHITE "\033[1;37m"
 #define COLOR_RESET "\033[0m"
-
-#endif

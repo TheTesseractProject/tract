@@ -2,7 +2,6 @@
 
 #include <string.h>
 #include <stdio.h>
-#include <stdbool.h>
 #include <unistd.h>
 
 #include "constants.h"
@@ -19,7 +18,7 @@ static bool has_valid_extension(const char* path) {
     if (ext == NULL) {
         return false;
     }
-    for (unsigned long i = 0; i < sizeof(valid_extensions_list) / sizeof(valid_extensions_list[0]); ++i) {
+    for (unsigned long i = 0; i < sizeof(valid_extensions_list) / sizeof(valid_extensions_list[0]); i++) {
         if (strcmp(ext, valid_extensions_list[i]) == 0) {
             return true;
         }
@@ -29,18 +28,18 @@ static bool has_valid_extension(const char* path) {
 
 FILE* file_open(const char* path) {
     if (!file_access(path)) {
-        ERRF(ERR_FILE_UNABLE_ACCESS, path);
+        ERRFLN(ERR_FILE_UNABLE_ACCESS, path);
         return NULL;
     }
     
     if (!has_valid_extension(path)) {
-        ERRF(ERR_INVALID_EXTENSION, path);
+        ERRFLN(ERR_INVALID_EXTENSION, path);
         return NULL;
     }
     
     FILE* file = fopen(path, "r");
     if (!file) {
-        ERRF(ERR_FILE_UNABLE_ACCESS, path);
+        ERRFLN(ERR_FILE_UNABLE_ACCESS, path);
         return NULL;
     }
     return file;

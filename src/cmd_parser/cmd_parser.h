@@ -1,5 +1,4 @@
-#ifndef CMD_PARSER_H
-#define CMD_PARSER_H
+#pragma once
 
 typedef enum {
     ERROR,
@@ -16,5 +15,3 @@ typedef struct {
 } cmd_data;
 
 cmd_data parse_cmd(int *argc, char* argv[]);
-
-#endif

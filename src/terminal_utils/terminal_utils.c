@@ -1,7 +1,6 @@
 #include "terminal_utils.h"
 
 #include <stdio.h>
-#include <stdbool.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -48,6 +47,11 @@ void clear_terminal(void) {
 }
 
 float get_char_aspect_ratio(void) {
+#ifdef _WIN32
+    system("cls");
+#else
+    clear_terminal();
+#endif
     unsigned height = 5;
     unsigned width = height;
     int ch;
@@ -74,9 +78,9 @@ float get_char_aspect_ratio(void) {
 #else
             clear_terminal();
 #endif
-            MSG(TESSERACT_ANIMATION_CHAR_ASPECT_TEXT);
-            for (unsigned i = 0; i < height; ++i) {
-                for (unsigned j = 0; j < width; ++j) {
+            MSGLN(TESSERACT_ANIMATION_CHAR_ASPECT_TEXT);
+            for (unsigned i = 0; i < height; i++) {
+                for (unsigned j = 0; j < width; j++) {
                     putchar((i == 0 || i == height-1 || j == 0 || j == width-1) ? '@' : '.');
                 }
                 putchar('\n');
@@ -90,8 +94,8 @@ float get_char_aspect_ratio(void) {
             if (ch == 0xE0 || ch == 0x00) {
                 ch = _getch();
                 switch(ch) {
-                    case 'K': if(width > height) { --width; changed = true; } break;
-                    case 'M': if(width < 15) { ++width; changed = true; } break;
+                    case 'K': if(width > height) { width--; changed = true; } break;
+                    case 'M': if(width < 15) { width++; changed = true; } break;
                 }
             }
             else if (ch == '\r') break;
@@ -102,8 +106,8 @@ float get_char_aspect_ratio(void) {
             if (ch == '\033') {
                 getchar();
                 switch(getchar()) {
-                    case 'D': if(width > height) { --width; changed = true; } break;
-                    case 'C': if(width < 15) { ++width; changed = true; } break;
+                    case 'D': if(width > height) { width--; changed = true; } break;
+                    case 'C': if(width < 15) { width++; changed = true; } break;
                 }
             }
         }

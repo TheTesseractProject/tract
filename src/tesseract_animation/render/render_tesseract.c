@@ -1,12 +1,15 @@
 #include "render_tesseract.h"
 
 #include <stdio.h>
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "render_text.h"
 #include "constants.h"
@@ -294,42 +297,42 @@ static void rotateZW(Vector4 *v, float angle) {
 }
 
 void rotate_world_XY(float theta) {
-    for (size_t i = 0; i < drawings_size; ++i) {
+    for (size_t i = 0; i < drawings_size; i++) {
         rotateXY(&drawings_buffer[i].a, theta);
         rotateXY(&drawings_buffer[i].b, theta);
     }
 }
 
 void rotate_world_XZ(float theta) {
-    for (size_t i = 0; i < drawings_size; ++i) {
+    for (size_t i = 0; i < drawings_size; i++) {
         rotateXZ(&drawings_buffer[i].a, theta);
         rotateXZ(&drawings_buffer[i].b, theta);
     }
 }
 
 void rotate_world_XW(float theta) {
-    for (size_t i = 0; i < drawings_size; ++i) {
+    for (size_t i = 0; i < drawings_size; i++) {
         rotateXW(&drawings_buffer[i].a, theta);
         rotateXW(&drawings_buffer[i].b, theta);
     }
 }
 
 void rotate_world_YZ(float theta) {
-    for (size_t i = 0; i < drawings_size; ++i) {
+    for (size_t i = 0; i < drawings_size; i++) {
         rotateYZ(&drawings_buffer[i].a, theta);
         rotateYZ(&drawings_buffer[i].b, theta);
     }
 }
 
 void rotate_world_YW(float theta) {
-    for (size_t i = 0; i < drawings_size; ++i) {
+    for (size_t i = 0; i < drawings_size; i++) {
         rotateYW(&drawings_buffer[i].a, theta);
         rotateYW(&drawings_buffer[i].b, theta);
     }
 }
 
 void rotate_world_ZW(float theta) {
-    for (size_t i = 0; i < drawings_size; ++i) {
+    for (size_t i = 0; i < drawings_size; i++) {
         rotateZW(&drawings_buffer[i].a, theta);
         rotateZW(&drawings_buffer[i].b, theta);
     }
@@ -441,13 +444,13 @@ void draw(bool perspective, float fov_degrees, float zoom, const char* text, uns
     }
 
     if (previous_cols <= 38 || previous_rows <= 15) {
-        MSG(TESSERACT_ANIMATION_TOO_SMALL);
+        MSGLN(TESSERACT_ANIMATION_TOO_SMALL);
         return;
     }
 
     render_text(text, offset, reverse); // text
 
-    for (size_t i = 0; i < drawings_size; ++i) {
+    for (size_t i = 0; i < drawings_size; i++) {
         drawing d = drawings_buffer[i];
         Vector3 projected_a = project4d3d(perspective, d.a, fov_degrees, zoom);
         Vector3 projected_b = project4d3d(perspective, d.b, fov_degrees, zoom);
@@ -458,9 +461,9 @@ void draw(bool perspective, float fov_degrees, float zoom, const char* text, uns
 
     char line_buf[screen_x + 3]; 
 
-    for (uint8_t yp = 0; yp < screen_y; ++yp) {
+    for (uint8_t yp = 0; yp < screen_y; yp++) {
         size_t pos = 0;
-        for (uint8_t xp = 0; xp < screen_x; ++xp) {
+        for (uint8_t xp = 0; xp < screen_x; xp++) {
             line_buf[pos++] = gradient[get_pixel(xp, yp)];
         }
         

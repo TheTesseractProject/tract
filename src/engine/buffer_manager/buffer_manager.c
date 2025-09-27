@@ -1,8 +1,8 @@
 #include "buffer_manager.h"
+#include "constants.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 
 char* init_file_buffer(FILE *input_file, size_t *file_size) {
     if (input_file == NULL) {
@@ -13,7 +13,7 @@ char* init_file_buffer(FILE *input_file, size_t *file_size) {
     fseek(input_file, 0, SEEK_END);
     long size = ftell(input_file);
     if (size < 0) {
-        fputs("Error: Could not determine file size\n", stderr);
+        ERRLN(ERR_FILE_SIZE_ERROR);
         return NULL;
     }
     
@@ -22,7 +22,7 @@ char* init_file_buffer(FILE *input_file, size_t *file_size) {
     // Allocate buffer
     char* buffer = (char*)malloc(size + 1);
     if (buffer == NULL) {
-        fputs("Error: Memory allocation failed for file buffer\n", stderr);
+        ERRLN(ERR_MEMORY_ALLOCATION_ERROR);
         return NULL;
     }
     
@@ -30,7 +30,7 @@ char* init_file_buffer(FILE *input_file, size_t *file_size) {
     size_t bytes_read = fread(buffer, 1, size, input_file);
     if (bytes_read != (size_t)size) {
         free(buffer);
-        fputs("Error: Failed to read entire file\n", stderr);
+        ERRLN(ERR_FILE_READ_ERROR);
         return NULL;
     }
     

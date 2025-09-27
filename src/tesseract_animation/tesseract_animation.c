@@ -1,7 +1,6 @@
 #include "tesseract_animation.h"
 
 #include <stdio.h>
-#include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
 
@@ -85,7 +84,7 @@ void tesseract_animation(void) {
             usleep(sleep);
         }
 
-        ++offset;
+        offset++;
 
         // --- Keypress check for quitting ---
         int ch = -1;
@@ -103,9 +102,11 @@ void tesseract_animation(void) {
 
 #ifndef _WIN32
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-#endif
-
     clear_terminal();
+#else
+    system("cls");
+#endif
+    
     MSG(TESSERACT_ANIMATION_END);
 
     free_all();

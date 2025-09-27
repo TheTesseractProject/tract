@@ -1,5 +1,4 @@
-#ifndef TOKEN_H
-#define TOKEN_H
+#pragma once
 
 #include <stdint.h>
 #include <stddef.h>
@@ -22,5 +21,3 @@ typedef struct tesseract_token {
     uint8_t args_count;
     tesseract_token_type type;
 } tesseract_token;
-
-#endif

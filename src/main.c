@@ -11,7 +11,7 @@ int main(int argc, char *argv[]) {
 
     switch (cmd_result.action) {
         case ERROR: {
-            ERR(TRACT_ARGS_ERROR);
+            ERRLN(TRACT_ARGS_ERROR);
             return 1;
         }
         case HELP: {
@@ -25,7 +25,7 @@ int main(int argc, char *argv[]) {
         case BUILD_FILE: {
             FILE *input_file = file_open(cmd_result.path);
             if (!input_file) {
-                ERR(TRACT_ACCESS_ERROR);
+                ERRLN(TRACT_ACCESS_ERROR);
                 return 1;
             }
 
@@ -33,11 +33,11 @@ int main(int argc, char *argv[]) {
             fclose(input_file);
 
             if (!build_success) {
-                ERR(TRACT_BUILD_ERROR);
+                ERRLN(TRACT_BUILD_ERROR);
                 return 1;
             }
 
-            MSG(TRACT_BUILD_FINISHED);
+            MSGLN(TRACT_BUILD_FINISHED);
             break;
         }
         case ANIMATION: {

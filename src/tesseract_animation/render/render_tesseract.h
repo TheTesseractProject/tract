@@ -1,7 +1,5 @@
-#ifndef RENDER_TESSERACT_H
-#define RENDER_TESSERACT_H
+#pragma once
 
-#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -53,5 +51,3 @@ void rotate_world_ZW(float theta);
 
 // Shape generation functions (used by tesseract_animation.c)
 void tesseract(const int8_t s);
-
-#endif

@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <stdbool.h>
 
 #include "constants.h"
 
@@ -21,12 +20,12 @@ void render_text(const char* text, unsigned short offset, bool reverse) {
     char text_buffer[text_size];
     text_buffer[text_size - 1] = '\0';
 
-    for (unsigned short i = 0; i < text_size - 1; ++i) {
+    for (unsigned short i = 0; i < text_size - 1; i++) {
         if (text[i] == '\033' && i + 1 < text_size - 1 && text[i + 1] == '[') {
             unsigned short j = i;
             while (j < text_size - 1 && text[j] != 'm') {
                 text_buffer[j] = text[j];
-                ++j;
+                j++;
             }
             if (j < text_size - 1) {
                 text_buffer[j] = text[j];
