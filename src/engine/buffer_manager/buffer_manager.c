@@ -28,14 +28,14 @@ char* init_file_buffer(FILE *input_file, size_t *file_size) {
     
     // Read file into buffer
     size_t bytes_read = fread(buffer, 1, size, input_file);
-    if (bytes_read != (size_t)size) {
+    if (bytes_read == 0 && size > 0) {
         free(buffer);
         ERRLN(ERR_FILE_READ_ERROR);
         return NULL;
     }
     
-    buffer[size] = '\0';
-    *file_size = (size_t)size;
+    buffer[bytes_read] = '\0';
+    *file_size = bytes_read;
     
     return buffer;
 }

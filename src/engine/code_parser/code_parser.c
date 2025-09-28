@@ -280,18 +280,21 @@ bool tesseract_parse(char* buffer, size_t buffer_size) {
         char c = parser->input[parser->pos];
         
         switch (c) {
-            case ' ': case '\n': case '\r': case '\t': case '\0':
+            case ' ': case '\n': case '\r': case '\t':
                 handle_whitespace(parser);
                 break;
-                
+
+            case '\0':
+                goto END_PARSE_LOOP;
+
             case '(': case ',': case ';':
                 handle_delimiter(parser, c);
                 break;
-                
+
             case ')':
                 handle_closing_paren(parser);
                 break;
-                
+
             default:
                 if (handle_token_character(parser)) {
                     continue; // Skip the pos increment and restart the loop
@@ -300,6 +303,8 @@ bool tesseract_parse(char* buffer, size_t buffer_size) {
         }
         parser->pos++;
     }
+    
+END_PARSE_LOOP:
     
     // Validate end of parse
     bool result = validate_end_of_parse(parser) && parser->parse_success;
