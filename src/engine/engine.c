@@ -9,7 +9,7 @@
 
 bool engine_build_file(FILE *input_file, const char *input_path, const char *output_path) {
     if (!input_file) {
-        ERRLN(TRACT_ACCESS_ERROR);
+        ERRLN(TERRA_ACCESS_ERROR);
         return false;
     }
 

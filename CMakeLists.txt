@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(tract VERSION 0.1.0 LANGUAGES C)
+project(terra VERSION 0.1.0 LANGUAGES C)
 
 # Set C standard
 set(CMAKE_C_STANDARD 23)
@@ -20,11 +20,12 @@ file(GLOB_RECURSE SOURCES "src/*.c")
 # Add executable target
 add_executable(${PROJECT_NAME} ${SOURCES})
 
-# Include directories
-include_directories("src")
+# Common core
+add_subdirectory(core)
+include_directories("src" "core/include")
 
 # Link math library
-target_link_libraries(${PROJECT_NAME} m)
+target_link_libraries(${PROJECT_NAME} core m)
 
 # Install target
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)

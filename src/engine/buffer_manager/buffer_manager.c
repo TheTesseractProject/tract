@@ -2,7 +2,8 @@
 #include "constants.h"
 
 #include <stdio.h>
-#include <stdlib.h>
+
+#include "core_alloc.h"
 
 char* init_file_buffer(FILE *input_file, size_t *file_size) {
     if (input_file == NULL) {
@@ -20,7 +21,7 @@ char* init_file_buffer(FILE *input_file, size_t *file_size) {
     rewind(input_file);
     
     // Allocate buffer
-    char* buffer = (char*)malloc(size + 1);
+    char* buffer = (char*)core_alloc(size + 1);
     if (buffer == NULL) {
         ERRLN(ERR_MEMORY_ALLOCATION_ERROR);
         return NULL;
@@ -29,7 +30,7 @@ char* init_file_buffer(FILE *input_file, size_t *file_size) {
     // Read file into buffer
     size_t bytes_read = fread(buffer, 1, size, input_file);
     if (bytes_read == 0 && size > 0) {
-        free(buffer);
+        core_free(buffer);
         ERRLN(ERR_FILE_READ_ERROR);
         return NULL;
     }
@@ -42,6 +43,6 @@ char* init_file_buffer(FILE *input_file, size_t *file_size) {
 
 void cleanup_buffer(char* buffer) {
     if (buffer != NULL) {
-        free(buffer);
+        core_free(buffer);
     }
 }

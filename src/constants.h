@@ -13,8 +13,8 @@
 
 #define VER "alpha0.0"
 
-#define TRACT COLOR_BRIGHT_MAGENTA "TRACT" COLOR_RESET
-#define TRACT_COLON TRACT ": "
+#define TERRA COLOR_BRIGHT_MAGENTA "TERRA" COLOR_RESET
+#define TERRA_COLON TERRA ": "
 #define ERROR_MSG COLOR_BRIGHT_RED "Error" COLOR_RESET ": "
 #define WARNING_MSG COLOR_BRIGHT_YELLOW "Warning" COLOR_RESET ": "
 #define OK COLOR_GREEN "Ok" COLOR_RESET
@@ -23,7 +23,7 @@
 
 #define BUILDING_MSG "[%d/%d] Building '" COLOR_BRIGHT_WHITE "%s" COLOR_RESET "'... "
 #define BUILDING_BUILT_MSG "Built to '" COLOR_BRIGHT_WHITE "%s" COLOR_RESET "'"
-#define TRACT_BUILD_FINISHED TRACT_COLON COLOR_GREEN "Build finished" COLOR_RESET
+#define TERRA_BUILD_FINISHED TERRA_COLON COLOR_GREEN "Build finished" COLOR_RESET
 
 #define ERR_BAD_ARGUMENT ERROR_MSG "'" COLOR_RED "%s" COLOR_RESET "'" COLOR_RESET " is not a recognized argument. See '-h' for help"
 #define ERR_FILE_UNABLE_ACCESS ERROR_MSG "Unable to access file '" COLOR_RED "%s" COLOR_RESET "'"
@@ -48,15 +48,15 @@
 #define WARN_PARSER_DELIMITER_EXPECTED WARNING_MSG "Expected delimiter before end of file"
 #define WARN_PARSER_UNTERMINATED_ARGS WARNING_MSG "Unterminated argument list detected at end of file"
 
-#define AN_ERROR_OCCURRED_WHILE TRACT_COLON COLOR_RED "An error occurred while "
-#define TRACT_ARGS_ERROR AN_ERROR_OCCURRED_WHILE "parsing arguments" COLOR_RESET
-#define TRACT_ACCESS_ERROR AN_ERROR_OCCURRED_WHILE "accessing the file" COLOR_RESET
-#define TRACT_BUILD_ERROR AN_ERROR_OCCURRED_WHILE "building the file" COLOR_RESET
+#define AN_ERROR_OCCURRED_WHILE TERRA_COLON COLOR_RED "An error occurred while "
+#define TERRA_ARGS_ERROR AN_ERROR_OCCURRED_WHILE "parsing arguments" COLOR_RESET
+#define TERRA_ACCESS_ERROR AN_ERROR_OCCURRED_WHILE "accessing the file" COLOR_RESET
+#define TERRA_BUILD_ERROR AN_ERROR_OCCURRED_WHILE "building the file" COLOR_RESET
 
 #define HELP_TEXT "\n"\
 \
 COLOR_BRIGHT_WHITE "About" COLOR_RESET "\n"\
-TRACT " - The " COLOR_BRIGHT_WHITE "Tesseract" COLOR_RESET " compiler.\n"\
+TERRA " - The " COLOR_BRIGHT_WHITE "Tesseract" COLOR_RESET " compiler.\n"\
 "Lightning-fast compilation and\n"\
 "aggressive optimization for peak performance.\n"\
 "Made with " COLOR_BRIGHT_RED "LOVE" COLOR_RESET " by " COLOR_BRIGHT_WHITE "@pka_human" COLOR_RESET ".\n\n"\
@@ -68,9 +68,9 @@ COLOR_BRIGHT_WHITE "Available options" COLOR_RESET "\n"\
 "-o, --output <path>: Specify the path to the compiled file\n--tesseract: Beautiful ASCII 4D tesseract animation\n\n"\
 \
 COLOR_BRIGHT_WHITE "Usage" COLOR_RESET "\n"\
-COLOR_GRAY "tract <args>" COLOR_RESET "\n\n"
+COLOR_GRAY "terra <args>" COLOR_RESET "\n\n"
 
-#define TESSERACT_ANIMATION_TEXT TRACT " BUILD TOOL FOR " COLOR_BRIGHT_WHITE "TESSERACT" COLOR_RESET "\nVersion: " COLOR_BRIGHT_WHITE VER COLOR_RESET ", UwU! (Quit - 'Q')"
+#define TESSERACT_ANIMATION_TEXT TERRA " BUILD TOOL FOR " COLOR_BRIGHT_WHITE "TESSERACT" COLOR_RESET "\nVersion: " COLOR_BRIGHT_WHITE VER COLOR_RESET ", UwU! (Quit - 'Q')"
 #define TESSERACT_ANIMATION_CHAR_ASPECT_TEXT "Use left/right arrow keys to adjust\nthe width until it looks like a square.\nPress Enter when it's right.\n\n"
 #define TESSERACT_ANIMATION_TOO_SMALL "Too small :("
 #define TESSERACT_ANIMATION_GRADIENT "@&Xx+;:,. "

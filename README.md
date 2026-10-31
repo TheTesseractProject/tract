@@ -1,15 +1,8 @@
 ![logo](logo.png)
-# TRACT - Tesseract Compiler
+# Terra - Tesseract Compiler
+a fork based on https://github.com/TheTesseractProject/terra
 
-[![GitHub Release](https://img.shields.io/github/v/release/TheTesseractProject/tract?style=plastic)](https://github.com/TheTesseractProject/tract/releases)
-[![GitHub Downloads](https://img.shields.io/github/downloads/TheTesseractProject/tract/total?style=plastic)](https://github.com/TheTesseractProject/tract/releases)
-[![GitHub code size](https://img.shields.io/github/languages/code-size/TheTesseractProject/tract?style=plastic)](https://github.com/TheTesseractProject/tract)
-[![GitHub lines of code](https://tokei.rs/b1/github/TheTesseractProject/tract)](https://github.com/TheTesseractProject/tract)
-[![CMake](https://img.shields.io/badge/CMake-3.16+-blue.svg?style=plastic)](https://cmake.org/)
-[![C Standard](https://img.shields.io/badge/C-23-blue.svg?style=plastic)](https://en.wikipedia.org/wiki/C23_(C_standard_revision))
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/TheTesseractProject/tract)
-
-> **TRACT** - Lightning-fast Tesseract language compiler with aggressive optimization for peak performance. Tesseract is simple but with great power.
+> *Terra* is one of the implementations of the Tesseract language.
 
 > [!WARNING]
 > This project is currently under active development. Features and documentation may change frequently. At the moment the language is not ready for full-fledged work, it is a prototype.
@@ -56,8 +49,8 @@ Hello there!
 ### Quick Start (Recommended)
 ```bash
 # Clone the repository
-git clone https://github.com/TheTesseractProject/tract.git
-cd tract
+git clone https://github.com/nazar-ponomarenko-dots/Terra
+cd terra
 ```
 
 ```bash
@@ -76,7 +69,7 @@ cmake --build build
 
 ```bash
 # Run the application
-./bin/tract --help
+./bin/terra --help
 ```
 
 ### Clean Build
@@ -90,19 +83,19 @@ rm -rf bin/ build/
 
 ```bash
 # Show help
-./bin/tract --help
+./bin/terra --help
 
 # Show version
-./bin/tract --version
+./bin/terra --version
 
 # Build a file
-./bin/tract input.tt
+./bin/terra input.tt
 
 # Build with custom output
-./bin/tract input.tt -o output
+./bin/terra input.tt -o output
 
 # Show tesseract animation
-./bin/tract --tesseract
+./bin/terra --tesseract
 ```
 
 ### Command Line Options
@@ -162,10 +155,10 @@ This project is licensed under the terms specified in the [LICENSE](LICENSE) fil
 
 If you encounter any issues or have questions:
 
-1. Check the [Issues](https://github.com/TheTesseractProject/tract/issues) page
+1. Check the [Issues](https://github.com/nazar-ponomarenko-dots/Terra/issues) page
 2. Create a new issue with detailed information
 3. Include your system information and error messages
 
 ---
 
-**TRACT** - Where mathematics meets performance! 🚀 
+**Terra** - Where mathematics meets performance! 🚀
