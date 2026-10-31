@@ -1,6 +1,6 @@
 ![logo](logo.png)
 # Terra - Tesseract Compiler
-a fork based on https://github.com/TheTesseractProject/terra
+a fork based on https://github.com/TheTesseractProject/tract
 
 > *Terra* is one of the implementations of the Tesseract language.
 
