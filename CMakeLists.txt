@@ -20,12 +20,39 @@ file(GLOB_RECURSE SOURCES "src/*.c")
 # Add executable target
 add_executable(${PROJECT_NAME} ${SOURCES})
 
-# Common core
-add_subdirectory(core)
-include_directories("src" "core/include")
+# Common core (lives under src/core)
+add_subdirectory(src/core)
+include_directories("src" "src/core/include")
 
 # Link math library
 target_link_libraries(${PROJECT_NAME} core m)
+
+# Tests for the shared core
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(core_common_tests tests/core_common_test.c)
+    target_link_libraries(core_common_tests core m)
+    add_test(NAME core_common COMMAND core_common_tests)
+
+    add_executable(sema_tests
+        tests/sema_test.c
+        src/engine/frontend/lexer.c
+        src/engine/frontend/ast.c
+        src/engine/frontend/parser.c
+        src/engine/sema/sema.c
+    )
+    target_link_libraries(sema_tests core m)
+    add_test(NAME sema COMMAND sema_tests)
+
+    add_executable(frontend_tests
+        tests/frontend_test.c
+        src/engine/frontend/lexer.c
+        src/engine/frontend/ast.c
+        src/engine/frontend/parser.c
+    )
+    target_link_libraries(frontend_tests core m)
+    add_test(NAME frontend COMMAND frontend_tests)
+endif()
 
 # Install target
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)

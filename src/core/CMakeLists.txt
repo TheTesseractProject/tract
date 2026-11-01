@@ -4,7 +4,13 @@ project(core VERSION 0.1.0 LANGUAGES C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-add_library(core STATIC src/core_alloc.c)
+add_library(core STATIC
+    src/core_alloc.c
+    src/core_crc.c
+    src/core_float.c
+    src/core_json.c
+    src/core_diagnostics.c
+)
 target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Default to FULL profile unless overridden.

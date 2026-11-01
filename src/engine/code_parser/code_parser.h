@@ -1,5 +1,6 @@
 #pragma once
 
-#include <stdio.h>
+#include <stddef.h>
 
-bool tesseract_parse(char* buffer, size_t buffer_size);
+bool tesseract_parse(const char *buffer, size_t buffer_size,
+                     const char *path);

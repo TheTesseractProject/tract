@@ -3,3 +3,5 @@ build/
 *.tt
 debug.log
 .qoder/
+.clangd
+compile_commands.json

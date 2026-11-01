@@ -10,6 +10,13 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
     data.action = BUILD_FILE;
     data.path = NULL;
     data.output = NULL;
+    
+    // Проверка на NULL аргументы
+    if (argc == NULL || argv == NULL) {
+        ERRLN(TERRA_ARGS_ERROR);
+        data.action = ERROR;
+        return data;
+    }
 
     if (*argc <= 1) {
         data.action = HELP;
@@ -17,7 +24,8 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
     }
 
     for (int i = 1; i < *argc; i++) {
-        if (argv[i][0] != '-') {
+        if (argv[i] == NULL || argv[i][0] != '-') {
+            // Это путь к файлу
             if (data.path == NULL) {
                 data.path = argv[i];
                 continue;
@@ -38,33 +46,54 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
             data.action = ANIMATION;
             return data;
         } else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--build") == 0) {
-            if (data.path != NULL) {
-                ERRLN(ERR_MULTIPLE_BUILD);
-                data.action = ERROR;
-                return data;
-            } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
-                data.path = argv[i + 1];
-                i++;
-                continue;
-            } else {
+            // Проверка: есть ли следующий аргумент
+            if (i + 1 >= *argc) {
                 ERRLN(ERR_BUILD_FILE_NOT_SPECIFIED);
                 data.action = ERROR;
                 return data;
             }
-        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
-            if (data.output != NULL) {
-                ERRLN(ERR_MULTIPLE_OUTPUT);
+            
+            // Следующий аргумент не должен быть флагом
+            if (argv[i + 1][0] == '-') {
+                ERRFLN(ERR_BAD_ARGUMENT, argv[i + 1]);
                 data.action = ERROR;
                 return data;
-            } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
-                data.output = argv[i + 1];
-                i++;
-                continue;
-            } else {
+            }
+            
+            // Проверка на дубликат build файла
+            if (data.path != NULL && strcmp(data.path, argv[i + 1]) != 0) {
+                ERRLN(ERR_MULTIPLE_BUILD);
+                data.action = ERROR;
+                return data;
+            }
+            
+            data.path = argv[i + 1];
+            i++;
+            continue;
+        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
+            // Проверка: есть ли следующий аргумент
+            if (i + 1 >= *argc) {
                 ERRLN(ERR_OUTPUT_FILE_NOT_SPECIFIED);
                 data.action = ERROR;
                 return data;
             }
+            
+            // Следующий аргумент не должен быть флагом
+            if (argv[i + 1][0] == '-') {
+                ERRFLN(ERR_BAD_ARGUMENT, argv[i + 1]);
+                data.action = ERROR;
+                return data;
+            }
+            
+            if (data.output != NULL) {
+                ERRLN(ERR_MULTIPLE_OUTPUT);
+                data.action = ERROR;
+                return data;
+            }
+            
+            data.output = argv[i + 1];
+            i++;
+            continue;
         } else {
             ERRFLN(ERR_BAD_ARGUMENT, argv[i]);
             data.action = ERROR;
@@ -72,7 +101,8 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
         }
     }
 
-    if (data.output == NULL) {
+    // Установить дефолтный output только если это не режим анимации
+    if (data.action != ANIMATION && data.output == NULL) {
         data.output = "output";
     }
 

@@ -341,8 +341,9 @@ void rotate_world_ZW(float theta) {
 static void set_2d_gradient_point(unsigned x, unsigned y, int z) {
     z = z < -100 ? -100 : (z > 100 ? 100 : z);
     float normalized_z = (float)(z + 100) / 200.0f;
-    size_t index = (int)(normalized_z * (gradient_size - 1));
-    index = index < 0 ? 0 : (index >= gradient_size ? gradient_size - 1 : index);
+    int index_i = (int)(normalized_z * (float)(gradient_size - 1));
+    if (index_i < 0) index_i = 0;
+    size_t index = (size_t)index_i >= gradient_size ? gradient_size - 1 : (size_t)index_i;
     size_t current_index = get_pixel(x, y);
     if (index < current_index) {
         set_pixel(x, y, index);

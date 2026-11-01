@@ -6,12 +6,12 @@
 #define MSGF(str, ...) printf(str, __VA_ARGS__)
 #define ERR(str) fputs(str, stderr)
 #define ERRF(str, ...) fprintf(stderr, str, __VA_ARGS__)
-#define MSGLN(str) fputs(str, stdout); fputc('\n', stdout)
-#define MSGFLN(str, ...) printf(str, __VA_ARGS__); fputc('\n', stdout)
-#define ERRLN(str) fputs(str, stderr); fputc('\n', stderr)
-#define ERRFLN(str, ...) fprintf(stderr, str, __VA_ARGS__); fputc('\n', stderr)
+#define MSGLN(str) do { fputs(str, stdout); fputc('\n', stdout); } while(0)
+#define MSGFLN(str, ...) do { printf(str, __VA_ARGS__); fputc('\n', stdout); } while(0)
+#define ERRLN(str) do { fputs(str, stderr); fputc('\n', stderr); } while(0)
+#define ERRFLN(str, ...) do { fprintf(stderr, str, __VA_ARGS__); fputc('\n', stderr); } while(0)
 
-#define VER "alpha0.0"
+#define VER "alpha0.0.1"
 
 #define TERRA COLOR_BRIGHT_MAGENTA "TERRA" COLOR_RESET
 #define TERRA_COLON TERRA ": "
@@ -38,16 +38,6 @@
 #define ERR_MEMORY_ALLOCATION_ERROR ERROR_MSG "Memory allocation failed for file buffer"
 #define ERR_FILE_READ_ERROR ERROR_MSG "Failed to read entire file"
 
-// Code parser warnings
-#define WARN_DEBUG_LOG WARNING_MSG "Could not open debug.log for writing"
-#define WARN_PARSER_UNEXPECTED_CHAR WARNING_MSG "Unexpected '%c'"
-#define WARN_PARSER_UNEXPECTED_DELIMITER WARNING_MSG "Unexpected delimiter '%c', expected '%c'"
-#define WARN_PARSER_UNEXPECTED_DELIMITER_BEFORE_END WARNING_MSG "Unexpected delimiter before end of arguments"
-#define WARN_PARSER_COMMA_EXPECTED WARNING_MSG "',' expected before new token"
-#define WARN_PARSER_SEMICOLON_EXPECTED WARNING_MSG "';' expected before new token"
-#define WARN_PARSER_DELIMITER_EXPECTED WARNING_MSG "Expected delimiter before end of file"
-#define WARN_PARSER_UNTERMINATED_ARGS WARNING_MSG "Unterminated argument list detected at end of file"
-
 #define AN_ERROR_OCCURRED_WHILE TERRA_COLON COLOR_RED "An error occurred while "
 #define TERRA_ARGS_ERROR AN_ERROR_OCCURRED_WHILE "parsing arguments" COLOR_RESET
 #define TERRA_ACCESS_ERROR AN_ERROR_OCCURRED_WHILE "accessing the file" COLOR_RESET
@@ -59,7 +49,7 @@ COLOR_BRIGHT_WHITE "About" COLOR_RESET "\n"\
 TERRA " - The " COLOR_BRIGHT_WHITE "Tesseract" COLOR_RESET " compiler.\n"\
 "Lightning-fast compilation and\n"\
 "aggressive optimization for peak performance.\n"\
-"Made with " COLOR_BRIGHT_RED "LOVE" COLOR_RESET " by " COLOR_BRIGHT_WHITE "@pka_human" COLOR_RESET ".\n\n"\
+"Made with " COLOR_BRIGHT_RED "LOVE" COLOR_RESET " by " COLOR_BRIGHT_WHITE "Tesseract Authors" COLOR_RESET ".\n\n"\
 \
 COLOR_BRIGHT_WHITE "Available options" COLOR_RESET "\n"\
 "-v, --version: Show version\n"\

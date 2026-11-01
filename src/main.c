@@ -19,10 +19,16 @@ int main(int argc, char *argv[]) {
             break;
         }
         case VERSION: {
-            MSG(VER "\n");
+            MSGLN(VER);
             break;
         }
         case BUILD_FILE: {
+            // Проверка: путь к файлу не указан
+            if (cmd_result.path == NULL) {
+                ERRLN(ERR_BUILD_FILE_NOT_SPECIFIED);
+                return 1;
+            }
+            
             FILE *input_file = file_open(cmd_result.path);
             if (!input_file) {
                 ERRLN(TERRA_ACCESS_ERROR);
@@ -36,8 +42,7 @@ int main(int argc, char *argv[]) {
                 ERRLN(TERRA_BUILD_ERROR);
                 return 1;
             }
-
-            MSGLN(TERRA_BUILD_FINISHED);
+            
             break;
         }
         case ANIMATION: {
