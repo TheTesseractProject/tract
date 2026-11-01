@@ -3,6 +3,7 @@
 a fork based on https://github.com/TheTesseractProject/tract
 
 > *Terra* is one of the implementations of the Tesseract language.
+> At this time, this implementation may not comply with Tesseract standards.
 
 > [!WARNING]
 > This project is currently under active development. Features and documentation may change frequently. At the moment the language is not ready for full-fledged work, it is a prototype.
