@@ -208,8 +208,38 @@ static const char* tess_type_to_c(const char *tess_type) {
     return tess_type;
 }
 
+/**
+ * @brief True when the type name is a built-in scalar/string type.
+ */
+static bool is_builtin_type_name(const char *tess_type) {
+    if (!tess_type) return false;
+    return strcmp(tess_type, "int") == 0 || strcmp(tess_type, "i32") == 0 ||
+           strcmp(tess_type, "float") == 0 || strcmp(tess_type, "f64") == 0 ||
+           strcmp(tess_type, "bool") == 0 || strcmp(tess_type, "boolean") == 0 ||
+           strcmp(tess_type, "str") == 0 || strcmp(tess_type, "string") == 0 ||
+           strcmp(tess_type, "null") == 0 || strcmp(tess_type, "None") == 0;
+}
+
+/**
+ * @brief Emit a C declarator: "<type><* if class> <name>"
+ *
+ * Instances of user-defined classes are heap objects, so fields and
+ * parameters of class type are pointers.
+ */
+static void append_declarator(c99_codegen *gen, const char *tess_type,
+                              const char *name) {
+    const char *c_type = tess_type_to_c(tess_type);
+    append_fprintf(gen, "%s%s %s", c_type,
+                   is_builtin_type_name(tess_type) ? "" : "*", name);
+}
+
 static bool expr_is_string_like(c99_codegen *gen, tess_expr *e);
 static bool expr_is_float_like(c99_codegen *gen, tess_expr *e);
+static tess_field *find_field(tess_class *cls, const char *name);
+static tess_class *find_class(c99_codegen *gen, const char *name);
+static const char *expr_class(c99_codegen *gen, tess_expr *e);
+static bool class_has_method(c99_codegen *gen, const char *cls,
+                             const char *method);
 
 /**
  * @brief Check if an expression is a float literal or has float type
@@ -220,55 +250,24 @@ static bool expr_is_float_like(c99_codegen *gen, tess_expr *e) {
         case TESS_EXPR_FLOAT: return true;
         case TESS_EXPR_IDENT: {
             const char *cls = get_var_class(gen, e->as.ident);
-            if (cls && strcmp(cls, "float") == 0) return true;
             /* Bare field name inside a method (maps to self->field) */
-            if (gen->current_class && gen->program) {
-                for (size_t i = 0; i < gen->program->count; i++) {
-                    tess_stmt *st = gen->program->items[i];
-                    if (st && st->kind == TESS_STMT_CLASS && st->as.class_decl &&
-                        strcmp(st->as.class_decl->name, gen->current_class) == 0) {
-                        tess_class *c = st->as.class_decl;
-                        for (size_t j = 0; j < c->field_count; j++) {
-                            if (strcmp(c->fields[j].name, e->as.ident) == 0 &&
-                                c->fields[j].type &&
-                                (strcmp(c->fields[j].type, "float") == 0 ||
-                                 strcmp(c->fields[j].type, "f64") == 0)) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                }
+            if (cls == NULL && gen->current_class) {
+                tess_field *field = find_field(find_class(gen, gen->current_class),
+                                               e->as.ident);
+                if (field != NULL) cls = field->type;
             }
-            return false;
+            return cls != NULL && (strcmp(cls, "float") == 0 ||
+                                   strcmp(cls, "f64") == 0);
         }
         case TESS_EXPR_MEMBER: {
             /* Float-typed field access (self->b, t->value) */
             if (!e->as.member.object || !e->as.member.name) return false;
-            const char *cls = NULL;
-            if (e->as.member.object->kind == TESS_EXPR_IDENT) {
-                const char *obj = e->as.member.object->as.ident;
-                if (strcmp(obj, "self") == 0) cls = gen->current_class;
-                else cls = get_var_class(gen, obj);
-            }
-            if (!cls || !gen->program) return false;
-            for (size_t i = 0; i < gen->program->count; i++) {
-                tess_stmt *st = gen->program->items[i];
-                if (st && st->kind == TESS_STMT_CLASS && st->as.class_decl &&
-                    strcmp(st->as.class_decl->name, cls) == 0) {
-                    tess_class *c = st->as.class_decl;
-                    for (size_t j = 0; j < c->field_count; j++) {
-                        if (strcmp(c->fields[j].name, e->as.member.name) == 0 &&
-                            c->fields[j].type &&
-                            (strcmp(c->fields[j].type, "float") == 0 ||
-                             strcmp(c->fields[j].type, "f64") == 0)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-            }
-            return false;
+            const char *cls = expr_class(gen, e->as.member.object);
+            if (cls == NULL) return false;
+            tess_field *field = find_field(find_class(gen, cls), e->as.member.name);
+            return field != NULL && field->type != NULL &&
+                   (strcmp(field->type, "float") == 0 ||
+                    strcmp(field->type, "f64") == 0);
         }
         case TESS_EXPR_CALL: {
             if (e->as.call.callee && e->as.call.callee->kind == TESS_EXPR_IDENT) {
@@ -299,55 +298,23 @@ static bool expr_is_string_like(c99_codegen *gen, tess_expr *e) {
         case TESS_EXPR_STRING: return true;
         case TESS_EXPR_IDENT: {
             const char *cls = get_var_class(gen, e->as.ident);
-            if (cls && strcmp(cls, "str") == 0) return true;
             /* Bare field name inside a method (maps to self->field) */
-            if (gen->current_class && gen->program) {
-                for (size_t i = 0; i < gen->program->count; i++) {
-                    tess_stmt *st = gen->program->items[i];
-                    if (st && st->kind == TESS_STMT_CLASS && st->as.class_decl &&
-                        strcmp(st->as.class_decl->name, gen->current_class) == 0) {
-                        tess_class *c = st->as.class_decl;
-                        for (size_t j = 0; j < c->field_count; j++) {
-                            if (strcmp(c->fields[j].name, e->as.ident) == 0 &&
-                                c->fields[j].type &&
-                                (strcmp(c->fields[j].type, "str") == 0 ||
-                                 strcmp(c->fields[j].type, "string") == 0)) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                }
+            if (cls == NULL && gen->current_class) {
+                tess_field *field = find_field(find_class(gen, gen->current_class),
+                                               e->as.ident);
+                if (field != NULL) cls = field->type;
             }
-            return false;
+            return cls != NULL && strcmp(cls, "str") == 0;
         }
         case TESS_EXPR_MEMBER: {
             /* String-typed field access (self->b, t->name) */
             if (!e->as.member.object || !e->as.member.name) return false;
-            const char *cls = NULL;
-            if (e->as.member.object->kind == TESS_EXPR_IDENT) {
-                const char *obj = e->as.member.object->as.ident;
-                if (strcmp(obj, "self") == 0) cls = gen->current_class;
-                else cls = get_var_class(gen, obj);
-            }
-            if (!cls || !gen->program) return false;
-            for (size_t i = 0; i < gen->program->count; i++) {
-                tess_stmt *st = gen->program->items[i];
-                if (st && st->kind == TESS_STMT_CLASS && st->as.class_decl &&
-                    strcmp(st->as.class_decl->name, cls) == 0) {
-                    tess_class *c = st->as.class_decl;
-                    for (size_t j = 0; j < c->field_count; j++) {
-                        if (strcmp(c->fields[j].name, e->as.member.name) == 0 &&
-                            c->fields[j].type &&
-                            (strcmp(c->fields[j].type, "str") == 0 ||
-                             strcmp(c->fields[j].type, "string") == 0)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-            }
-            return false;
+            const char *cls = expr_class(gen, e->as.member.object);
+            if (cls == NULL) return false;
+            tess_field *field = find_field(find_class(gen, cls), e->as.member.name);
+            return field != NULL && field->type != NULL &&
+                   (strcmp(field->type, "str") == 0 ||
+                    strcmp(field->type, "string") == 0);
         }
         case TESS_EXPR_BINARY:
             if (e->as.binary.op != TESS_BIN_ADD) return false;
@@ -393,6 +360,67 @@ static const char *construction_class(c99_codegen *gen, tess_expr *value) {
 static bool expr_is_null(c99_codegen *gen, tess_expr *e) {
     (void)gen;
     return e != NULL && e->kind == TESS_EXPR_NULL;
+}
+
+/* Find a declared field named `name` on class `cls`. */
+static tess_field *find_field(tess_class *cls, const char *name) {
+    if (cls == NULL || name == NULL) return NULL;
+    for (size_t i = 0; i < cls->field_count; i++) {
+        if (strcmp(cls->fields[i].name, name) == 0) return &cls->fields[i];
+    }
+    return NULL;
+}
+
+/* Find a declared class by name. */
+static tess_class *find_class(c99_codegen *gen, const char *name) {
+    if (gen == NULL || gen->program == NULL || name == NULL) return NULL;
+    for (size_t i = 0; i < gen->program->count; i++) {
+        tess_stmt *st = gen->program->items[i];
+        if (st && st->kind == TESS_STMT_CLASS && st->as.class_decl &&
+            strcmp(st->as.class_decl->name, name) == 0) {
+            return st->as.class_decl;
+        }
+    }
+    return NULL;
+}
+
+/* True when `cls` declares a method named `method`. */
+static bool class_has_method(c99_codegen *gen, const char *cls,
+                             const char *method) {
+    if (cls == NULL || method == NULL) return false;
+    tess_class *c = find_class(gen, cls);
+    if (c == NULL) return false;
+    for (size_t i = 0; i < c->method_count; i++) {
+        if (strcmp(c->methods[i].name, method) == 0) return true;
+    }
+    return false;
+}
+
+/* Static class of an object expression, or NULL when it is not a known class
+ * instance. Handles `self`, tracked variables (including `__auto_type`
+ * temporaries holding a member of a class-typed field) and `A.new` values. */
+static const char *expr_class(c99_codegen *gen, tess_expr *e) {
+    if (e == NULL) return NULL;
+    if (e->kind == TESS_EXPR_IDENT) {
+        if (strcmp(e->as.ident, "self") == 0) return gen->current_class;
+        const char *cls = get_var_class(gen, e->as.ident);
+        if (cls != NULL) return cls;
+        if (is_class_name(gen, e->as.ident)) return e->as.ident;
+        /* Bare field of the current class (`other.setx(...)` in a method). */
+        if (gen->current_class != NULL) {
+            tess_field *field = find_field(find_class(gen, gen->current_class),
+                                           e->as.ident);
+            if (field != NULL) return field->type;
+        }
+        return NULL;
+    }
+    if (e->kind == TESS_EXPR_MEMBER) {
+        const char *owner = expr_class(gen, e->as.member.object);
+        if (owner == NULL) return NULL;
+        tess_field *field = find_field(find_class(gen, owner), e->as.member.name);
+        return field != NULL ? field->type : NULL;
+    }
+    return construction_class(gen, e);
 }
 
 static bool is_field_of_current_class(c99_codegen *gen, const char *name) {
@@ -442,7 +470,9 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             break;
         }
         case TESS_EXPR_IDENT: {
-            if (gen->current_class && is_field_of_current_class(gen, expr->as.ident)) {
+            /* Parameters and locals shadow fields of the same name. */
+            if (gen->current_class && !is_declared_var(gen, expr->as.ident) &&
+                is_field_of_current_class(gen, expr->as.ident)) {
                 append_str(gen, "self->");
             }
             append_str(gen, expr->as.ident);
@@ -451,8 +481,9 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
         case TESS_EXPR_MEMBER: {
             if (!gen || !expr) return;
             const char *member = expr->as.member.name ? expr->as.member.name : "INVALID";
-            if (expr->as.member.object && expr->as.member.object->kind == TESS_EXPR_MODULE) {
-                const char *mod = expr->as.member.object->as.module;
+            tess_expr *obj_expr = expr->as.member.object;
+            if (obj_expr && obj_expr->kind == TESS_EXPR_MODULE) {
+                const char *mod = obj_expr->as.module;
                 const char *mem = expr->as.member.name ? expr->as.member.name : "INVALID";
                 if (mod && (strcmp(mod, "c") == 0 || strcmp(mod, "libc") == 0 ||
                             strcmp(mod, "std") == 0 || strcmp(mod, "math") == 0)) {
@@ -462,45 +493,35 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                 }
                 break;
             }
-            if (expr->as.member.object && expr->as.member.object->kind == TESS_EXPR_IDENT) {
-                const char *obj = expr->as.member.object->as.ident;
-                /* If member is a method on an instance, emit a call. */
-                const char *cls = NULL;
-                if (strcmp(obj, "self") == 0) cls = gen->current_class;
-                else cls = get_var_class(gen, obj);
-                if (cls && !is_class_name(gen, obj)) {
-                    bool is_method = false;
-                    if (gen->program) {
-                        for (size_t i = 0; i < gen->program->count && !is_method; i++) {
-                            tess_stmt *st = gen->program->items[i];
-                            if (st && st->kind == TESS_STMT_CLASS && st->as.class_decl &&
-                                strcmp(st->as.class_decl->name, cls) == 0) {
-                                tess_class *c = st->as.class_decl;
-                                for (size_t j = 0; j < c->method_count; j++) {
-                                    if (strcmp(c->methods[j].name, expr->as.member.name) == 0) { is_method = true; break; }
-                                }
-                            }
-                        }
-                    }
-                    if (is_method) {
-                        append_fprintf(gen, "%s_%s(%s)", cls, expr->as.member.name, obj);
-                        break;
-                    }
-                }
-                if (is_class_name(gen, obj)) {
-                    if (strcmp(member, "new") == 0) {
-                        append_fprintf(gen, "(%s*)calloc(1, sizeof(%s))", obj, obj);
-                    } else {
-                        append_fprintf(gen, "%s_%s", obj, member);
-                    }
+
+            /* `Class.new` / static member of a known class. */
+            if (obj_expr && obj_expr->kind == TESS_EXPR_IDENT &&
+                is_class_name(gen, obj_expr->as.ident)) {
+                const char *cls = obj_expr->as.ident;
+                if (strcmp(member, "new") == 0) {
+                    append_fprintf(gen, "(%s*)calloc(1, sizeof(%s))", cls, cls);
                 } else {
-                    append_str(gen, obj);
-                    append_str(gen, "->");
-                    append_str(gen, member);
+                    append_fprintf(gen, "%s_%s", cls, member);
                 }
-            } else if (expr->as.member.object) {
+                break;
+            }
+
+            /* Method referenced without parentheses (`t.run;`) is a call. */
+            const char *cls = expr_class(gen, obj_expr);
+            if (cls != NULL && class_has_method(gen, cls, member)) {
+                append_fprintf(gen, "%s_%s(", cls, member);
+                if (obj_expr != NULL) {
+                    c99_codegen_expr(gen, obj_expr);
+                } else {
+                    append_str(gen, "self");
+                }
+                append_str(gen, ")");
+                break;
+            }
+
+            if (obj_expr) {
                 append_str(gen, "(");
-                c99_codegen_expr(gen, expr->as.member.object);
+                c99_codegen_expr(gen, obj_expr);
                 append_str(gen, ")->");
                 append_str(gen, member);
             } else {
@@ -557,13 +578,7 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                     append_str(gen, ")");
                     break;
                 }
-                const char *cls = NULL;
-                if (obj_expr && obj_expr->kind == TESS_EXPR_IDENT) {
-                    const char *objname = obj_expr->as.ident;
-                    if (strcmp(objname, "self") == 0) cls = gen->current_class;
-                    else cls = get_var_class(gen, objname);
-                    if (!cls && is_class_name(gen, objname)) cls = objname;
-                }
+                const char *cls = expr_class(gen, obj_expr);
                 if (!cls) {
                     gen->failed = true;
                     append_str(gen, "/* UNSUPPORTED_CALL */");
@@ -735,6 +750,21 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
     }
 }
 
+static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt);
+
+/* Emit a statement used as a loop/branch body. A block body is emitted inline
+ * because the surrounding `if`/`while` already printed the braces. */
+static void c99_codegen_body(c99_codegen *gen, tess_stmt *body) {
+    if (body == NULL) return;
+    if (body->kind == TESS_STMT_BLOCK) {
+        for (size_t i = 0; i < body->as.block.count; i++) {
+            c99_codegen_stmt(gen, body->as.block.items[i]);
+        }
+    } else {
+        c99_codegen_stmt(gen, body);
+    }
+}
+
 /**
  * @brief Generate C99 code for a statement
  */
@@ -751,41 +781,6 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
             
         case TESS_STMT_EXPR: {
             append_indent(gen);
-            /* Method call without parentheses, e.g. t.c; */
-            if (stmt->as.expr && stmt->as.expr->kind == TESS_EXPR_MEMBER) {
-                tess_expr *m = stmt->as.expr;
-                if (m->as.member.object && m->as.member.object->kind == TESS_EXPR_IDENT) {
-                    const char *objname = m->as.member.object->as.ident;
-                    const char *method = m->as.member.name;
-                    const char *cls = NULL;
-                    if (strcmp(objname, "self") == 0) cls = gen->current_class;
-                    else cls = get_var_class(gen, objname);
-                    if (!cls && is_class_name(gen, objname)) cls = objname;
-                    /* Verify method exists */
-                    bool is_method = false;
-                    if (cls && gen->program) {
-                        for (size_t i = 0; i < gen->program->count && !is_method; i++) {
-                            tess_stmt *st = gen->program->items[i];
-                            if (st && st->kind == TESS_STMT_CLASS && st->as.class_decl &&
-                                strcmp(st->as.class_decl->name, cls) == 0) {
-                                tess_class *c = st->as.class_decl;
-                                for (size_t j = 0; j < c->method_count; j++) {
-                                    if (strcmp(c->methods[j].name, method) == 0) { is_method = true; break; }
-                                }
-                            }
-                        }
-                    }
-                    if (cls && is_method) {
-                        append_fprintf(gen, "%s_%s(", cls, method);
-                        append_str(gen, objname);
-                        append_str(gen, ");\n");
-                        break;
-                    }
-                    gen->failed = true;
-                    append_str(gen, "/* UNSUPPORTED_EXPR */;\n");
-                    break;
-                }
-            }
             c99_codegen_expr(gen, stmt->as.expr);
             append_str(gen, ";\n");
             break;
@@ -871,7 +866,7 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
             c99_codegen_expr(gen, stmt->as.if_stmt.cond);
             append_str(gen, ") {\n");
             gen->indent_level++;
-            c99_codegen_stmt(gen, stmt->as.if_stmt.then_branch);
+            c99_codegen_body(gen, stmt->as.if_stmt.then_branch);
             gen->indent_level--;
             
             if (stmt->as.if_stmt.else_branch && 
@@ -879,7 +874,7 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                 append_indent(gen);
                 append_str(gen, "} else {\n");
                 gen->indent_level++;
-                c99_codegen_stmt(gen, stmt->as.if_stmt.else_branch);
+                c99_codegen_body(gen, stmt->as.if_stmt.else_branch);
                 gen->indent_level--;
             }
             
@@ -894,7 +889,7 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
             c99_codegen_expr(gen, stmt->as.while_stmt.cond);
             append_str(gen, ") {\n");
             gen->indent_level++;
-            c99_codegen_stmt(gen, stmt->as.while_stmt.body);
+            c99_codegen_body(gen, stmt->as.while_stmt.body);
             gen->indent_level--;
             append_indent(gen);
             append_str(gen, "}\n");
@@ -903,6 +898,11 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
         
         case TESS_STMT_RETURN: {
             append_indent(gen);
+            /* `main` returns int; a top-level bare `return;` is not valid C. */
+            if (gen->current_class == NULL && stmt->as.ret == NULL) {
+                append_str(gen, "return 0;\n");
+                break;
+            }
             append_str(gen, "return ");
             if (stmt->as.ret) c99_codegen_expr(gen, stmt->as.ret);
             else append_str(gen, "0");
@@ -911,6 +911,9 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
         }
         
         case TESS_STMT_BLOCK: {
+            /* Branch/loop bodies are emitted inline by their parent
+             * statement, which already printed the opening `{`. */
+            append_indent(gen);
             append_str(gen, "{\n");
             gen->indent_level++;
             for (size_t i = 0; i < stmt->as.block.count; i++) {
@@ -966,8 +969,7 @@ static void c99_codegen_generate_method(c99_codegen *gen, tess_class *cls, tess_
     for (size_t i = 0; i < method->param_count; i++) {
         if (!first) append_str(gen, ", ");
         tess_param *param = &method->params[i];
-        const char *c_type = tess_type_to_c(param->type);
-        append_fprintf(gen, "%s %s", c_type, param->name);
+        append_declarator(gen, param->type, param->name);
         first = false;
     }
     
@@ -1005,7 +1007,7 @@ static void c99_codegen_generate_method(c99_codegen *gen, tess_class *cls, tess_
     }
     gen->indent_level--;
     append_indent(gen);
-    append_str(gen, "}\n");
+    append_str(gen, "}\n\n");
     
     gen->current_class = saved_class;
     reset_function_state(gen);
@@ -1016,26 +1018,56 @@ static void c99_codegen_generate_method(c99_codegen *gen, tess_class *cls, tess_
  */
 static void c99_codegen_generate_classes(c99_codegen *gen, tess_program *program) {
     if (!gen || !program) return;
-    
+
+    /* Methods may reference instances of classes declared later. */
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
-        if (stmt->kind != TESS_STMT_CLASS) continue;
-        
+        if (stmt == NULL || stmt->kind != TESS_STMT_CLASS) continue;
+        append_str(gen, "\ntypedef struct ");
+        append_str(gen, stmt->as.class_decl->name);
+        append_str(gen, " ");
+        append_str(gen, stmt->as.class_decl->name);
+        append_str(gen, ";\n");
+    }
+
+    /* Methods may also call methods of classes defined further down. */
+    append_str(gen, "\n");
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *stmt = program->items[i];
+        if (stmt == NULL || stmt->kind != TESS_STMT_CLASS) continue;
         tess_class *cls = stmt->as.class_decl;
-        
+        for (size_t j = 0; j < cls->method_count; j++) {
+            tess_method *method = &cls->methods[j];
+            append_fprintf(gen, "int %s_%s(%s* self", cls->name,
+                           method->name, cls->name);
+            for (size_t k = 0; k < method->param_count; k++) {
+                append_str(gen, ", ");
+                append_declarator(gen, method->params[k].type,
+                                  method->params[k].name);
+            }
+            append_str(gen, ");\n");
+        }
+    }
+
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *stmt = program->items[i];
+        if (stmt == NULL || stmt->kind != TESS_STMT_CLASS) continue;
+
+        tess_class *cls = stmt->as.class_decl;
+
         // Generate struct definition
         append_str(gen, "\ntypedef struct ");
         append_str(gen, cls->name);
         append_str(gen, " {\n");
-        
+
         gen->indent_level++;
-        
+
         bool any_field = false;
         for (size_t j = 0; j < cls->field_count; j++) {
             append_indent(gen);
             tess_field *field = &cls->fields[j];
-            const char *c_type = tess_type_to_c(field->type);
-            append_fprintf(gen, "%s %s;\n", c_type, field->name);
+            append_declarator(gen, field->type, field->name);
+            append_str(gen, ";\n");
             any_field = true;
         }
         if (!any_field) {
@@ -1043,14 +1075,19 @@ static void c99_codegen_generate_classes(c99_codegen *gen, tess_program *program
             append_indent(gen);
             append_str(gen, "char _terra_pad;\n");
         }
-        
+
         gen->indent_level--;
         append_indent(gen);
         append_str(gen, "} ");
         append_str(gen, cls->name);
         append_str(gen, ";\n");
-        
-        // Generate methods
+    }
+
+    /* Bodies come last: a method may touch fields of any class. */
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *stmt = program->items[i];
+        if (stmt == NULL || stmt->kind != TESS_STMT_CLASS) continue;
+        tess_class *cls = stmt->as.class_decl;
         for (size_t j = 0; j < cls->method_count; j++) {
             c99_codegen_generate_method(gen, cls, &cls->methods[j]);
         }
@@ -1069,8 +1106,10 @@ static void c99_codegen_generate_main(c99_codegen *gen, tess_program *program) {
     append_str(gen, "\nint main(int argc, char** argv) {\n");
     gen->indent_level++;
 
-    append_str(gen, "    (void)argc;\n");
-    append_str(gen, "    (void)argv;\n\n");
+    append_indent(gen);
+    append_str(gen, "(void)argc;\n");
+    append_indent(gen);
+    append_str(gen, "(void)argv;\n\n");
 
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
@@ -1079,9 +1118,11 @@ static void c99_codegen_generate_main(c99_codegen *gen, tess_program *program) {
         }
     }
 
-    gen->indent_level--;
+    append_str(gen, "\n");
     append_indent(gen);
     append_str(gen, "return 0;\n");
+    gen->indent_level--;
+    append_indent(gen);
     append_str(gen, "}\n");
 }
 
@@ -1167,7 +1208,8 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
         "TERRA_UNUSED static void put_str(const char* s){ printf(\"%s\\n\", s ? s : \"(null)\"); }\n");
     append_str(gen,
         "TERRA_UNUSED static char* concat(const char* a, const char* b){\n"
-        "    if(!a) a=\"\"; if(!b) b=\"\";\n"
+        "    if(!a) a=\"\";\n"
+        "    if(!b) b=\"\";\n"
         "    size_t la=strlen(a), lb=strlen(b);\n"
         "    char* r=(char*)malloc(la+lb+1);\n"
         "    if(!r) return NULL;\n"

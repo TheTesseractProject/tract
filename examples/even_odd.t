@@ -1,2 +1,7 @@
-num = 2;
-put(!(num%2) ? "Even" : "Odd");
+n = 2;
+rem = n % 2;
+if (rem == 0) {
+    put("Even");
+} else {
+    put("Odd");
+}

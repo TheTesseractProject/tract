@@ -34,6 +34,18 @@ Hello there!
 - **Modern C**: Written in C23 with best practices
 - **Error Handling**: Comprehensive error reporting
 
+## 🧩 Language Notes (current prototype)
+
+- Classes declare fields (`name: type;`) and methods (`name { ... }` or
+  `name(args: type) { ... }`).
+- `Class.new` allocates a zeroed instance; `Class.init(args)` allocates one and
+  calls `init`.
+- A field whose type is a user-defined class is a pointer to an instance, so a
+  class may reference another class declared later in the same file.
+- Methods can be called with or without parentheses (`obj.run;` is `obj.run()`).
+- Built-ins: `put`, `print`, `len`, `str`, `int`, `float`, `assert`, `input`.
+- Native interop: `@c.printf(...)`, `@math.sqrt(...)`.
+
 ## 📋 Requirements
 
 ### Build Dependencies
