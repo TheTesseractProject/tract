@@ -1,0 +1,12 @@
+[] - Parser: accept the ternary operator `cond ? a : b`. AST, sema and codegen already handle TESS_EXPR_TERNARY; only parse_binary/parse_primary need a new precedence level.
+[] - Parser: translate the remaining Russian comments (`// Первый LBRACE ...`, `// Это поле`, `// Это метод`, ...) to English so the file matches the rest of the codebase.
+[] - Sema: reject unknown `@module` names instead of accepting any identifier; codegen currently emits `mod_fn(...)` for typos, which fails later in C.
+[] - Sema: validate field and parameter type names, so a typo like `a: itn;` is an error instead of being emitted as an unknown pointer type.
+[] - Codegen: emit only the runtime helpers a program uses (put_*, concat, terra_*), instead of always pasting the whole runtime block into every output file.
+[] - Engine: the empty-source warning is printed twice (once in tesseract_parse, once in engine_build_file); keep a single warning and respect `--quiet`.
+[] - Cleanup: remove dead code - the unused legacy `generate_c99_code()` API in engine.c and the standalone generator `src/engine/compiler/codegen.c` + `codegen.h` (`TesseractNode`, `generate_code()`); neither is referenced and the compiler subdirectory is never added via add_subdirectory.
+[] - Build: decide the fate of the unused core modules (core_json, core_float, core_crc, core_value, core_profile) - either wire them into diagnostics/CLI or exclude them from the library.
+[] - CLI: change `parse_cmd(int *argc, ...)` to take `int argc` by value; the function never writes through the pointer.
+[] - Tests: compile the generated C in e2e tests with `-Wall -Wextra -Werror` so invalid or warning-producing output fails the suite.
+[] - Tests: add e2e coverage for the `.tes` and `.tt` extensions and for `--stdout`, `-o -`, `--output=`, `--build=` and the `--` separator; only a subset is covered today.
+[] - Repo: remove the leftover `debug.log` from the working tree (it is gitignored but confuses local runs).

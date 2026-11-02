@@ -29,6 +29,25 @@ Every release adheres to these principles:
 
 ---
 
+## 🗂️ Small Tasks Queue (`road.txt`)
+
+`road.txt` is the backlog of small, already-scoped tasks: targeted fixes and
+low-risk additions that do not need an RFC or a milestone of their own. Every
+entry is a single actionable line written as `[] - <task>`, and each should be
+small enough for one commit.
+
+Rules of the queue:
+
+- An item is added only when the problem is already understood and the fix is
+  local (one file, or a few closely related ones).
+- Items are taken from the top; mark a finished item by changing `[]` to `[x]`.
+- The file is a queue, not a roadmap: anything that changes semantics, public
+  syntax or the architecture still goes through the phases below.
+- Keep the list short (roughly a dozen open items); promote larger entries into
+  the appropriate phase instead of letting them pile up here.
+
+---
+
 ## ✅ Completed Releases
 
 | Version | Highlights | Status |
@@ -834,6 +853,7 @@ Proposal RFC → Implementation → Testing Beta → Community Feedback → Rele
 3. **Write Tests**: Increase coverage, add edge cases
 4. **Improve Docs**: Tutorials, API reference, examples
 5. **Spread the Word**: Blog posts, talks, workshops
+6. **Pick a Small Task**: Take the next `[]` item from [`road.txt`](road.txt)
 
 ### Getting Started
 
