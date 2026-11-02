@@ -43,6 +43,11 @@ void tess_lexer_init(tess_lexer *lx, const char *src, size_t len) {
     lx->src = src;
     lx->len = len;
     lx->pos = 0;
+    /* Skip a UTF-8 byte-order mark so it does not become a stray token. */
+    if (len >= 3 && (unsigned char)src[0] == 0xEF &&
+        (unsigned char)src[1] == 0xBB && (unsigned char)src[2] == 0xBF) {
+        lx->pos = 3;
+    }
     lx->error = NULL;
     lx->error_start = 0;
     lx->error_end = 0;

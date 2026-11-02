@@ -1,7 +1,6 @@
 #include "tesseract_animation.h"
 
 #include <stdio.h>
-#include <unistd.h>
 #include <string.h>
 
 #include "constants.h"
@@ -12,6 +11,7 @@
 #include <conio.h>
 #include <windows.h>
 #else
+#include <unistd.h>
 #include <termios.h>
 #include <fcntl.h>
 #endif
@@ -81,7 +81,11 @@ void tesseract_animation(void) {
 
         long long sleep = 10000 - (get_microseconds() - current_time);
         if (sleep > 0) {
-            usleep(sleep);
+#ifdef _WIN32
+            Sleep((DWORD)(sleep / 1000));
+#else
+            usleep((useconds_t)sleep);
+#endif
         }
 
         offset++;

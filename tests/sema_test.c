@@ -30,7 +30,7 @@ static bool sema_err(const char *src) {
     if (null) stderr = null;
 
     tess_program *p = tess_parse(src, strlen(src), "<test>");
-    bool ok = false;
+    bool ok = true;
     if (p != NULL) {
         ok = !tess_sema_check(p, src, "<test>");
         tess_program_free(p);
@@ -146,16 +146,73 @@ static void test_unknown_member(void) {
         "Dog { name: str; }\n"
         "d = Dog.new;\n"
         "put(d.bark);\n";    /* 'bark' not declared */
-    /* NOTE: d is declared as a plain VAR (not as a class-typed symbol), so the
-     * member check is not triggered here — this is a known current limitation.
-     * The test documents that the checker does NOT false-positive on it either. */
-    check(!sema_err(src), "unknown member on var-typed object: not yet an error");
+    check(sema_err(src), "unknown member on instance is rejected");
 
-    /* But accessing a non-existent member directly on the class name IS caught */
     const char *src2 =
         "Cat { name: str; }\n"
         "Cat.bark;\n";   /* 'bark' not declared, accessed on the class symbol */
     check(sema_err(src2), "unknown member on class name is rejected");
+
+    const char *src3 =
+        "Bird { name: str; }\n"
+        "b = Bird.new;\n"
+        "b.bark();\n";
+    check(sema_err(src3), "unknown method call is rejected");
+}
+
+/* ---- regressions ---- */
+
+static void test_many_variables(void) {
+    /* The old fixed-size (64 entry) scope table rejected the 65th name. */
+    char src[4096];
+    size_t n = 0;
+    for (int i = 0; i < 120; i++) {
+        n += (size_t)snprintf(src + n, sizeof src - n, "v%d = %d;\n", i, i);
+    }
+    check(sema_ok(src), "a scope with more than 64 variables works");
+}
+
+static void test_field_assignment_types(void) {
+    const char *src =
+        "Box { s: str; n: int; }\n"
+        "b = Box.new;\n"
+        "b.s = \"ok\";\n"
+        "b.n = 42;\n";
+    check(sema_ok(src), "correct field assignments pass");
+
+    const char *bad =
+        "Box { s: str; }\n"
+        "b = Box.new;\n"
+        "b.s = 12345;\n";
+    check(sema_err(bad), "assigning int to a str field is rejected");
+}
+
+static void test_method_signatures(void) {
+    const char *src =
+        "Calc { add(a: int, b: int) { put(a + b); } }\n"
+        "c = Calc.new;\n"
+        "c.add(1, 2);\n";
+    check(sema_ok(src), "method call with matching arguments passes");
+
+    check(sema_err(
+        "Calc { add(a: int, b: int) { put(a + b); } }\n"
+        "c = Calc.new;\n"
+        "c.add(1);\n"), "method call with too few arguments is rejected");
+
+    check(sema_err(
+        "Calc { add(a: int) { put(a); } }\n"
+        "c = Calc.new;\n"
+        "c.add(\"x\");\n"), "method call with wrong argument type is rejected");
+
+    check(sema_err(
+        "Calc { add(a: int) { put(a); } }\n"
+        "c = Calc.new;\n"
+        "c.add;\n"), "parameterised method used without a call is rejected");
+}
+
+static void test_duplicate_parameter(void) {
+    check(sema_err("C { m(a: int, a: int) { put(a); } }\n"),
+          "duplicate parameter is rejected");
 }
 
 static void test_duplicate_field(void) {
@@ -181,6 +238,10 @@ int main(void) {
     test_duplicate_class();
     test_unknown_member();
     test_duplicate_field();
+    test_many_variables();
+    test_field_assignment_types();
+    test_method_signatures();
+    test_duplicate_parameter();
 
     if (failures != 0) {
         fprintf(stderr, "%d sema test(s) failed\n", failures);

@@ -19,11 +19,10 @@ int main(int argc, char *argv[]) {
             break;
         }
         case VERSION: {
-            MSGLN(VER);
+            MSG(VERSION_TEXT);
             break;
         }
         case BUILD_FILE: {
-            // Проверка: путь к файлу не указан
             if (cmd_result.path == NULL) {
                 ERRLN(ERR_BUILD_FILE_NOT_SPECIFIED);
                 return 1;
@@ -35,7 +34,13 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
 
-            bool build_success = engine_build_file(input_file, cmd_result.path, cmd_result.output);
+            terra_build_options options = {
+                .check_only = cmd_result.check_only,
+                .to_stdout = cmd_result.to_stdout,
+                .quiet = cmd_result.quiet,
+            };
+            bool build_success = engine_build_file(input_file, cmd_result.path,
+                                                   cmd_result.output, &options);
             fclose(input_file);
 
             if (!build_success) {

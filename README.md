@@ -17,7 +17,7 @@ TesseractClass {
     }
 }
 
-Class = TesseractClass.init;
+Class = TesseractClass.new;
 Class.hi;
 ```
 
@@ -89,25 +89,39 @@ rm -rf bin/ build/
 # Show version
 ./bin/terra --version
 
-# Build a file
+# Translate a file to C (writes ./output by default)
 ./bin/terra input.tt
 
-# Build with custom output
-./bin/terra input.tt -o output
+# Translate with a custom output path
+./bin/terra input.tt -o output.c
+
+# Only parse and type-check
+./bin/terra --check input.tt
+
+# Write the generated C to stdout
+./bin/terra input.tt --stdout
 
 # Show tesseract animation
 ./bin/terra --tesseract
 ```
+
+> Terra emits C99-style source that uses a few GNU extensions (`__auto_type`,
+> statement expressions) for assign-to-declare and `Class.init(...)`. Build the
+> result with GCC/Clang in GNU mode, e.g. `cc output.c -o program`.
 
 ### Command Line Options
 
 | Option | Long Option | Description |
 |--------|-------------|-------------|
 | `-h` | `--help` | Show help information |
-| `-v` | `--version` | Show version information |
-| `-b` | `--build` | Build the specified file |
-| `-o` | `--output` | Specify output file path |
+| `-v`, `-V` | `--version` | Show version and build information |
+| `-b` | `--build` | Compile the specified file (path may also be positional) |
+| `-o` | `--output` | Output path; `-` means stdout (`--output=path` also works) |
+| `-c` | `--check` | Parse and type-check only, do not generate C |
+| | `--stdout` | Write generated C to standard output |
+| `-q` | `--quiet` | Suppress progress messages |
 | | `--tesseract` | Show ASCII tesseract animation |
+| | `--` | Treat all following arguments as paths |
 
 ### Supported File Extensions
 

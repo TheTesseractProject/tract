@@ -1,4 +1,3 @@
-window = @gtk.new_window;
-window.set_title("sosal");
-window.set_size(480, 360);
-window.show;
+// Native C interop demo
+@c.printf("Hello from C!\n");
+@c.printf("sqrt(2) = %f\n", @math.sqrt(2.0));

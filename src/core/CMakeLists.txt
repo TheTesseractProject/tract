@@ -10,6 +10,7 @@ add_library(core STATIC
     src/core_float.c
     src/core_json.c
     src/core_diagnostics.c
+    src/core_value.c
 )
 target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

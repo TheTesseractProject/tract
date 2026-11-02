@@ -10,6 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define TESS_MAX_DEPTH 256
+
+
 typedef struct {
     void *items;
     size_t count;
@@ -28,9 +31,11 @@ typedef struct {
     uint32_t err_start;
     uint32_t err_end;
     tess_program *program;
+    int depth;
 } tess_parser;
 
 static tess_stmt *parse_statement(tess_parser *p);
+static tess_stmt *parse_statement_impl(tess_parser *p);
 
 static bool fail_at(tess_parser *p, const char *message, size_t start,
                     size_t end) {
@@ -52,6 +57,20 @@ static bool fail_at(tess_parser *p, const char *message, size_t start,
 
 static bool fail_oom(tess_parser *p) {
     return fail_at(p, "out of memory", p->cur.start, p->cur.end);
+}
+
+/* Bound statement/block nesting so a pathological input cannot exhaust the C
+ * stack before the parser has a chance to report an error. */
+static tess_stmt *parse_statement(tess_parser *p) {
+    if (p->depth >= TESS_MAX_DEPTH) {
+        fail_at(p, "maximum statement nesting depth exceeded", p->cur.start,
+                p->cur.end);
+        return NULL;
+    }
+    p->depth++;
+    tess_stmt *stmt = parse_statement_impl(p);
+    p->depth--;
+    return stmt;
 }
 
 static bool lex_into(tess_parser *p, tess_token *tok) {
@@ -463,7 +482,21 @@ static tess_expr *parse_postfix(tess_parser *p) {
     return e;
 }
 
+static tess_expr *parse_unary_impl(tess_parser *p);
+
 static tess_expr *parse_unary(tess_parser *p) {
+    if (p->depth >= TESS_MAX_DEPTH) {
+        fail_at(p, "maximum expression nesting depth exceeded", p->cur.start,
+               p->cur.end);
+        return NULL;
+    }
+    p->depth++;
+    tess_expr *e = parse_unary_impl(p);
+    p->depth--;
+    return e;
+}
+
+static tess_expr *parse_unary_impl(tess_parser *p) {
     tess_unary_op op;
     switch (p->cur.kind) {
         case TESS_TOK_BANG: op = TESS_UN_NOT; break;
@@ -474,7 +507,7 @@ static tess_expr *parse_unary(tess_parser *p) {
     }
     uint32_t start = (uint32_t)p->cur.start;
     advance(p);
-    tess_expr *operand = parse_unary(p);
+    tess_expr *operand = parse_unary_impl(p);
     if (operand == NULL) {
         return NULL;
     }
@@ -624,7 +657,7 @@ static tess_stmt *parse_block_body(tess_parser *p) {
     return block;
 }
 
-static tess_stmt *parse_statement(tess_parser *p) {
+static tess_stmt *parse_statement_impl(tess_parser *p) {
     if (p->cur.kind == TESS_TOK_SEMI) {
         uint32_t start = (uint32_t)p->cur.start;
         uint32_t end = (uint32_t)p->cur.end;

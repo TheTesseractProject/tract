@@ -2,12 +2,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 
 #ifdef _WIN32
 #include <windows.h>
 #include <conio.h>
 #else
+#include <unistd.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <fcntl.h>
@@ -112,7 +112,11 @@ float get_char_aspect_ratio(void) {
             }
         }
 #endif
+#ifdef _WIN32
+        Sleep(10);
+#else
         usleep(10000);
+#endif
     }
 
 #ifdef _WIN32

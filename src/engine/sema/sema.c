@@ -40,12 +40,15 @@ typedef struct {
     } as;
 } sym_entry;
 
-#define SEMA_HTABLE_CAP 64u   /* must be power-of-two */
+#define SEMA_HTABLE_INITIAL 16u /* must be a power of two */
+#define SEMA_HTABLE_MAX_LOAD 2  /* grow when count * 2 >= cap */
 
 typedef struct tess_scope {
     struct tess_scope *parent;
     bool in_method;           /* true -> return is allowed           */
-    sym_entry table[SEMA_HTABLE_CAP];
+    sym_entry *table;
+    size_t cap;               /* power of two, 0 when init failed    */
+    size_t count;
 } tess_scope;
 
 /* FNV-1a 32-bit (fast, good distribution for short strings) */
@@ -58,15 +61,68 @@ static uint32_t fnv1a(const char *s) {
     return h;
 }
 
+static bool scope_init(tess_scope *sc) {
+    sc->table = core_alloc(SEMA_HTABLE_INITIAL * sizeof *sc->table);
+    if (sc->table == NULL) {
+        sc->cap = 0;
+        sc->count = 0;
+        return false;
+    }
+    memset(sc->table, 0, SEMA_HTABLE_INITIAL * sizeof *sc->table);
+    sc->cap = SEMA_HTABLE_INITIAL;
+    sc->count = 0;
+    return true;
+}
+
+static void scope_destroy(tess_scope *sc) {
+    core_free(sc->table);
+    sc->table = NULL;
+    sc->cap = 0;
+    sc->count = 0;
+}
+
 static sym_entry *scope_lookup_own(tess_scope *sc, const char *name) {
-    uint32_t idx = fnv1a(name) & (SEMA_HTABLE_CAP - 1);
-    for (uint32_t i = 0; i < SEMA_HTABLE_CAP; i++) {
-        uint32_t slot = (idx + i) & (SEMA_HTABLE_CAP - 1);
-        sym_entry *e = &sc->table[slot];
+    if (sc->table == NULL || sc->cap == 0) return NULL;
+    uint32_t mask = (uint32_t)sc->cap - 1u;
+    uint32_t idx = fnv1a(name) & mask;
+    for (uint32_t i = 0; i < sc->cap; i++) {
+        sym_entry *e = &sc->table[(idx + i) & mask];
         if (e->name == NULL) return NULL;
         if (strcmp(e->name, name) == 0) return e;
     }
     return NULL;
+}
+
+static bool scope_grow(tess_scope *sc) {
+    size_t new_cap = sc->cap * 2;
+    if (new_cap < sc->cap) return false;
+    sym_entry *new_table = core_alloc(new_cap * sizeof *new_table);
+    if (new_table == NULL) return false;
+    memset(new_table, 0, new_cap * sizeof *new_table);
+
+    uint32_t mask = (uint32_t)new_cap - 1u;
+    for (size_t i = 0; i < sc->cap; i++) {
+        sym_entry *old = &sc->table[i];
+        if (old->name == NULL) continue;
+        uint32_t idx = fnv1a(old->name) & mask;
+        size_t j = 0;
+        for (; j < new_cap; j++) {
+            sym_entry *slot = &new_table[(idx + j) & mask];
+            if (slot->name == NULL) {
+                *slot = *old;
+                break;
+            }
+        }
+        if (j == new_cap) {
+            core_free(new_table);
+            return false;
+        }
+    }
+
+    core_free(sc->table);
+    sc->table = new_table;
+    sc->cap = new_cap;
+    return true;
 }
 
 static sym_entry *scope_lookup(tess_scope *sc, const char *name) {
@@ -77,32 +133,38 @@ static sym_entry *scope_lookup(tess_scope *sc, const char *name) {
     return NULL;
 }
 
-/* Returns false if the table is full (shouldn't happen at cap=64 for programs
- * we expect, but we handle it gracefully). */
+/* Returns false on duplicate name or allocation failure. */
 static bool scope_define(tess_scope *sc, const char *name, sym_kind kind,
                          tess_type type, tess_class *cls, int arity, bool variadic) {
-    uint32_t idx = fnv1a(name) & (SEMA_HTABLE_CAP - 1);
-    for (uint32_t i = 0; i < SEMA_HTABLE_CAP; i++) {
-        uint32_t slot = (idx + i) & (SEMA_HTABLE_CAP - 1);
-        sym_entry *e = &sc->table[slot];
+    if (sc->table == NULL) return false;
+
+    /* Keep the load factor low so probing stays cheap and terminating. */
+    if ((sc->count + 1) * SEMA_HTABLE_MAX_LOAD >= sc->cap) {
+        if (!scope_grow(sc)) return false;
+    }
+
+    uint32_t mask = (uint32_t)sc->cap - 1u;
+    uint32_t idx = fnv1a(name) & mask;
+    for (size_t i = 0; i < sc->cap; i++) {
+        sym_entry *e = &sc->table[(idx + i) & mask];
         if (e->name == NULL) {
             e->name  = name;
             e->kind  = kind;
             e->type  = type;
-            if (kind == SYM_CLASS) {
+            if (kind == SYM_CLASS || (kind == SYM_VAR && type == TYPE_CLASS)) {
                 e->as.cls = cls;
             } else if (kind == SYM_BUILTIN) {
                 e->as.builtin.arity = arity;
                 e->as.builtin.variadic = variadic;
             }
+            sc->count++;
             return true;
         }
         if (strcmp(e->name, name) == 0) {
-            /* Redefinition: update in place so caller can detect via return. */
             return false;
         }
     }
-    return false; /* table full */
+    return false;
 }
 
 /* -------------------------------------------------------------------------
@@ -117,6 +179,12 @@ typedef struct {
     /* Current class being analysed (NULL at top level). */
     tess_class  *current_class;
 } tess_sema;
+
+static tess_type type_from_name(tess_sema *s, const char *name,
+                                tess_class **out_cls);
+static tess_field *class_find_field(tess_class *cls, const char *name);
+static tess_method *class_find_method(tess_class *cls, const char *name);
+static tess_class *receiver_class(tess_sema *s, tess_expr *obj);
 
 static void report(tess_sema *s, uint32_t start, uint32_t end,
                    const char *msg) {
@@ -142,17 +210,24 @@ static void report(tess_sema *s, uint32_t start, uint32_t end,
     core_located_free(at);
 }
 
-/* Push/pop scopes on the C stack — they are stack-allocated, so no heap. */
-static void push_scope(tess_sema *s, tess_scope *sc, bool in_method) {
+/* Scopes themselves live on the C stack; their symbol tables are heap-backed
+ * and grow on demand, so a scope is no longer limited to a fixed capacity. */
+static bool push_scope(tess_sema *s, tess_scope *sc, bool in_method) {
     memset(sc, 0, sizeof *sc);
     sc->parent    = s->scope;
     sc->in_method = in_method ? true :
                     (s->scope != NULL && s->scope->in_method);
+    if (!scope_init(sc)) {
+        return false;
+    }
     s->scope = sc;
+    return true;
 }
 
 static void pop_scope(tess_sema *s) {
-    s->scope = s->scope->parent;
+    tess_scope *sc = s->scope;
+    s->scope = sc->parent;
+    scope_destroy(sc);
 }
 
 /* -------------------------------------------------------------------------
@@ -182,8 +257,19 @@ static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
             return TYPE_INT; // Fallback
         }
         case TESS_EXPR_MEMBER: {
-            /* Method calls return void, field access returns field type */
-            /* For now, assume methods - detailed type inference requires more AST info */
+            /* Infer field type when the receiver is a known class instance. */
+            tess_class *cls = receiver_class(s, e->as.member.object);
+            if (cls != NULL) {
+                tess_field *field = class_find_field(cls, e->as.member.name);
+                if (field != NULL) {
+                    return type_from_name(s, field->type, NULL);
+                }
+                /* Methods currently have no declared return type in the AST
+                 * (the backend emits `int`), so keep the historical default. */
+                if (class_find_method(cls, e->as.member.name) != NULL) {
+                    return TYPE_INT;
+                }
+            }
             return TYPE_NULL;
         }
         case TESS_EXPR_CALL: {
@@ -285,6 +371,146 @@ static bool types_compatible(tess_type a, tess_type b) {
     return false;
 }
 
+/* Map a Tesseract type name to the internal type, resolving class names. */
+static tess_type type_from_name(tess_sema *s, const char *name,
+                                tess_class **out_cls) {
+    if (out_cls != NULL) *out_cls = NULL;
+    if (name == NULL) return TYPE_INT; /* legacy default for untyped params */
+
+    if (strcmp(name, "int") == 0 || strcmp(name, "i32") == 0) return TYPE_INT;
+    if (strcmp(name, "float") == 0 || strcmp(name, "f64") == 0) return TYPE_FLOAT;
+    if (strcmp(name, "str") == 0 || strcmp(name, "string") == 0) return TYPE_STR;
+    if (strcmp(name, "bool") == 0 || strcmp(name, "boolean") == 0) return TYPE_BOOL;
+    if (strcmp(name, "null") == 0 || strcmp(name, "None") == 0) return TYPE_NULL;
+
+    sym_entry *sym = scope_lookup(s->scope, name);
+    if (sym != NULL && sym->kind == SYM_CLASS) {
+        if (out_cls != NULL) *out_cls = sym->as.cls;
+        return TYPE_CLASS;
+    }
+    return TYPE_NULL;
+}
+
+static bool type_name_known(tess_sema *s, const char *name) {
+    if (name == NULL) return false;
+    if (strcmp(name, "int") == 0 || strcmp(name, "i32") == 0 ||
+        strcmp(name, "float") == 0 || strcmp(name, "f64") == 0 ||
+        strcmp(name, "str") == 0 || strcmp(name, "string") == 0 ||
+        strcmp(name, "bool") == 0 || strcmp(name, "boolean") == 0 ||
+        strcmp(name, "null") == 0 || strcmp(name, "None") == 0) {
+        return true;
+    }
+    sym_entry *sym = scope_lookup(s->scope, name);
+    return sym != NULL && sym->kind == SYM_CLASS;
+}
+
+static tess_field *class_find_field(tess_class *cls, const char *name) {
+    if (cls == NULL || name == NULL) return NULL;
+    for (size_t i = 0; i < cls->field_count; i++) {
+        if (strcmp(cls->fields[i].name, name) == 0) return &cls->fields[i];
+    }
+    return NULL;
+}
+
+static tess_method *class_find_method(tess_class *cls, const char *name) {
+    if (cls == NULL || name == NULL) return NULL;
+    for (size_t i = 0; i < cls->method_count; i++) {
+        if (strcmp(cls->methods[i].name, name) == 0) return &cls->methods[i];
+    }
+    return NULL;
+}
+
+/* Resolve the class of a `obj.member` receiver when `obj` is a simple name. */
+static tess_class *receiver_class(tess_sema *s, tess_expr *obj) {
+    if (obj == NULL || obj->kind != TESS_EXPR_IDENT) return NULL;
+    sym_entry *sym = scope_lookup(s->scope, obj->as.ident);
+    if (sym == NULL) return NULL;
+    if (sym->kind == SYM_CLASS) return sym->as.cls;
+    if (sym->kind == SYM_VAR && sym->type == TYPE_CLASS) return sym->as.cls;
+    return NULL;
+}
+
+/* If `value` constructs an instance (Class.new / Class.init(...)), return the
+ * class, so assign-to-declare can remember the variable's type. */
+static tess_class *class_from_construction(tess_sema *s, tess_expr *value) {
+    if (value == NULL) return NULL;
+    tess_expr *member = NULL;
+    if (value->kind == TESS_EXPR_CALL &&
+        value->as.call.callee != NULL &&
+        value->as.call.callee->kind == TESS_EXPR_MEMBER) {
+        member = value->as.call.callee;
+    } else if (value->kind == TESS_EXPR_MEMBER) {
+        member = value;
+    }
+    if (member == NULL) return NULL;
+    if (member->as.member.name == NULL) return NULL;
+    if (strcmp(member->as.member.name, "new") != 0 &&
+        strcmp(member->as.member.name, "init") != 0) {
+        return NULL;
+    }
+    tess_expr *obj = member->as.member.object;
+    if (obj == NULL || obj->kind != TESS_EXPR_IDENT) return NULL;
+    sym_entry *sym = scope_lookup(s->scope, obj->as.ident);
+    if (sym != NULL && sym->kind == SYM_CLASS) return sym->as.cls;
+    return NULL;
+}
+
+static bool can_assign(tess_type target, tess_type value) {
+    if (target == value) return true;
+    if ((target == TYPE_INT && value == TYPE_FLOAT) ||
+        (target == TYPE_FLOAT && value == TYPE_INT)) {
+        return true;
+    }
+    /* null is assignable to reference-like types */
+    if (value == TYPE_NULL &&
+        (target == TYPE_CLASS || target == TYPE_STR)) {
+        return true;
+    }
+    return false;
+}
+
+static const char *type_label(tess_type t) {
+    switch (t) {
+        case TYPE_INT: return "int";
+        case TYPE_FLOAT: return "float";
+        case TYPE_STR: return "str";
+        case TYPE_BOOL: return "bool";
+        case TYPE_NULL: return "null";
+        case TYPE_CLASS: return "class";
+    }
+    return "unknown";
+}
+
+/* Validate a method call's arity and argument types. */
+static bool check_method_args(tess_sema *s, tess_expr *call,
+                              tess_class *cls, tess_method *method,
+                              const char *method_name, size_t argc) {
+    size_t expected = method->param_count;
+    if (argc != expected) {
+        char msg[256];
+        snprintf(msg, sizeof msg,
+                 "method `%s` expects %zu argument%s, got %zu",
+                 method_name, expected, expected == 1 ? "" : "s", argc);
+        report(s, call->start, call->end, msg);
+        return false;
+    }
+    for (size_t i = 0; i < argc; i++) {
+        tess_type want = type_from_name(s, method->params[i].type, NULL);
+        tess_type got = infer_expr_type(s, call->as.call.args[i]);
+        if (want != TYPE_NULL && !can_assign(want, got)) {
+            char msg[256];
+            snprintf(msg, sizeof msg,
+                     "argument %zu of `%s.%s` has type %s, expected %s",
+                     i + 1, cls->name, method_name,
+                     type_label(got), type_label(want));
+            report(s, call->as.call.args[i]->start,
+                   call->as.call.args[i]->end, msg);
+            return false;
+        }
+    }
+    return true;
+}
+
 /* -------------------------------------------------------------------------
  * lvalue check (assignment target must be ident or member access)
  * ------------------------------------------------------------------------- */
@@ -328,29 +554,47 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
             tess_expr *obj = e->as.member.object;
             const char *member = e->as.member.name;
 
+            if (obj == NULL || member == NULL) {
+                report(s, e->start, e->end, "invalid member access");
+                return false;
+            }
             if (!check_expr(s, obj)) return false;
 
-            /* If the object is a known class instance, validate the member exists. */
+            /* If the object is a known class, validate the member exists. */
             if (obj->kind == TESS_EXPR_IDENT) {
-                sym_entry *sym = scope_lookup(s->scope, obj->as.ident);
-                if (sym != NULL && sym->kind == SYM_VAR && sym->type == TYPE_CLASS) {
-                    tess_class *cls = sym->as.cls;
-                    bool found = false;
-                    
-                    for (size_t i = 0; i < cls->field_count && !found; i++)
-                        if (strcmp(cls->fields[i].name, member) == 0) found = true;
-                    for (size_t i = 0; i < cls->method_count && !found; i++)
-                        if (strcmp(cls->methods[i].name, member) == 0) found = true;
-                    
-                    /* Special pseudo-members */
-                    if (!found && strcmp(member, "new") == 0) found = true;
-                    if (!found && strcmp(member, "init") == 0) found = true;
-                    
-                    if (!found) {
+                tess_class *cls = receiver_class(s, obj);
+                if (cls != NULL) {
+                    tess_field *field = class_find_field(cls, member);
+                    tess_method *method = class_find_method(cls, member);
+                    bool pseudo = strcmp(member, "new") == 0 ||
+                                  strcmp(member, "init") == 0;
+                    sym_entry *objsym = scope_lookup(s->scope, obj->as.ident);
+                    if (objsym != NULL && objsym->kind == SYM_CLASS && !pseudo) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "cannot access `%s` through the class name; "
+                                 "create an instance first",
+                                 member);
+                        report(s, e->start, e->end, msg);
+                        return false;
+                    }
+                    if (field == NULL && method == NULL && !pseudo) {
                         char msg[256];
                         snprintf(msg, sizeof msg,
                                  "class `%s` has no member `%s`",
                                  cls->name, member);
+                        report(s, e->start, e->end, msg);
+                        return false;
+                    }
+                    /* A parameterless method may be used as `obj.method`
+                     * (implicit call); one that takes arguments may not. */
+                    if (method != NULL && field == NULL &&
+                        method->param_count > 0) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "method `%s.%s` requires %zu argument%s",
+                                 cls->name, member, method->param_count,
+                                 method->param_count == 1 ? "" : "s");
                         report(s, e->start, e->end, msg);
                         return false;
                     }
@@ -362,6 +606,15 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
         case TESS_EXPR_CALL: {
             tess_expr *callee = e->as.call.callee;
             size_t argc = e->as.call.arg_count;
+
+            if (callee == NULL) {
+                report(s, e->start, e->end, "invalid function call");
+                return false;
+            }
+            if (argc > 0 && e->as.call.args == NULL) {
+                report(s, e->start, e->end, "invalid argument list");
+                return false;
+            }
 
             /* Check arity for known builtins and validate argument types */
             if (callee->kind == TESS_EXPR_IDENT) {
@@ -387,24 +640,76 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                         /* Simple type validation - built-ins generally accept various types */
                         (void)arg_type; // Future enhancement
                     }
-                } else {
-                    /* User-defined method call - check method signature */
-                    if (callee->as.ident != NULL) {
-                        sym_entry *obj_sym = scope_lookup(s->scope, callee->as.ident);
-                        if (obj_sym != NULL && obj_sym->type == TYPE_CLASS) {
-                            /* TODO: Method signature checking */
+                }
+            }
+
+            /* Method calls: validate arity and argument types when the
+             * receiver's class is known. */
+            if (callee->kind == TESS_EXPR_MEMBER) {
+                const char *mname = callee->as.member.name;
+                tess_class *cls = receiver_class(s, callee->as.member.object);
+                if (cls != NULL && mname != NULL) {
+                    tess_method *method = class_find_method(cls, mname);
+                    if (strcmp(mname, "new") == 0) {
+                        if (argc != 0) {
+                            report(s, e->start, e->end,
+                                   "`new` does not take arguments");
+                            return false;
                         }
+                    } else if (strcmp(mname, "init") == 0) {
+                        if (method != NULL) {
+                            if (!check_method_args(s, e, cls, method, mname, argc))
+                                return false;
+                        } else if (argc != 0) {
+                            char msg[256];
+                            snprintf(msg, sizeof msg,
+                                     "class `%s` has no `init` taking arguments",
+                                     cls->name);
+                            report(s, e->start, e->end, msg);
+                            return false;
+                        }
+                    } else if (method != NULL) {
+                        if (!check_method_args(s, e, cls, method, mname, argc))
+                            return false;
+                    } else if (class_find_field(cls, mname) != NULL) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "`%s.%s` is a field, not a method",
+                                 cls->name, mname);
+                        report(s, e->start, e->end, msg);
+                        return false;
+                    } else if (method == NULL &&
+                               strcmp(mname, "new") != 0 &&
+                               strcmp(mname, "init") != 0) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "class `%s` has no member `%s`",
+                                 cls->name, mname);
+                        report(s, e->start, e->end, msg);
+                        return false;
                     }
                 }
             }
 
-            if (!check_expr(s, callee)) return false;
+            /* When the callee is a member access, checking it as a value would
+             * wrongly demand that a parameterised method be called with no
+             * arguments. Validate the receiver instead; the member itself was
+             * checked above. */
+            if (callee->kind == TESS_EXPR_MEMBER) {
+                if (!check_expr(s, callee->as.member.object)) return false;
+            } else if (!check_expr(s, callee)) {
+                return false;
+            }
             for (size_t i = 0; i < argc; i++)
                 if (!check_expr(s, e->as.call.args[i])) return false;
             return true;
         }
 
         case TESS_EXPR_ASSIGN: {
+            if (e->as.assign.target == NULL || e->as.assign.value == NULL) {
+                report(s, e->start, e->end, "invalid assignment");
+                return false;
+            }
             if (!is_lvalue(e->as.assign.target)) {
                 report(s, e->as.assign.target->start, e->as.assign.target->end,
                        "expression is not assignable");
@@ -457,6 +762,10 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
         }
 
         case TESS_EXPR_BINARY: {
+            if (e->as.binary.lhs == NULL || e->as.binary.rhs == NULL) {
+                report(s, e->start, e->end, "invalid binary expression");
+                return false;
+            }
             if (!check_expr(s, e->as.binary.lhs)) return false;
             if (!check_expr(s, e->as.binary.rhs)) return false;
             
@@ -517,6 +826,10 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
         }
 
         case TESS_EXPR_UNARY: {
+            if (e->as.unary.operand == NULL) {
+                report(s, e->start, e->end, "invalid unary expression");
+                return false;
+            }
             if (!check_expr(s, e->as.unary.operand)) return false;
             
             /* Negation: numeric only */
@@ -548,6 +861,10 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
         }
 
         case TESS_EXPR_TERNARY: {
+            if (e->as.ternary.cond == NULL) {
+                report(s, e->start, e->end, "invalid conditional expression");
+                return false;
+            }
             if (!check_expr(s, e->as.ternary.cond)) return false;
             if (!check_expr(s, e->as.ternary.then_expr)) return false;
             if (!check_expr(s, e->as.ternary.else_expr)) return false;
@@ -606,41 +923,71 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                        "expression is not assignable");
                 return false;
             }
+
+            /* Built-in functions and class names are not variables. */
+            if (target->kind == TESS_EXPR_IDENT) {
+                sym_entry *existing = scope_lookup(s->scope, target->as.ident);
+                if (existing != NULL && existing->kind != SYM_VAR) {
+                    char msg[256];
+                    snprintf(msg, sizeof msg,
+                             "cannot assign to %s `%s`",
+                             existing->kind == SYM_CLASS ? "class" : "builtin",
+                             target->as.ident);
+                    report(s, target->start, target->end, msg);
+                    return false;
+                }
+            }
             
-            /* Check value expression */
+            /* Check the value first so its type is known. */
             if (!check_expr(s, value)) return false;
 
-            /* Declare the variable in the current scope if it's a bare ident
-             * that hasn't been seen yet (Tesseract uses assign-to-declare). */
             if (target->kind == TESS_EXPR_IDENT) {
+                /* Declare the variable if this is its first assignment
+                 * (Tesseract uses assign-to-declare). */
                 if (scope_lookup_own(s->scope, target->as.ident) == NULL) {
                     tess_type var_type = infer_expr_type(s, value);
-                    
-                    /* If we're assigning a class instance, track it as class type */
-                    if (var_type == TYPE_NULL) {
-                        sym_entry *callee_sym = NULL;
-                        if (value->kind == TESS_EXPR_CALL &&
-                            value->as.call.callee->kind == TESS_EXPR_MEMBER &&
-                            value->as.call.callee->as.member.object != NULL &&
-                            value->as.call.callee->as.member.object->kind == TESS_EXPR_IDENT) {
-                            /* Class.new pattern */
-                            callee_sym = scope_lookup(s->scope,
-                                value->as.call.callee->as.member.object->as.ident);
-                        }
+                    tess_class *var_cls = NULL;
 
-                        if (callee_sym != NULL && callee_sym->kind == SYM_CLASS) {
-                            var_type = TYPE_CLASS;
-                        } else {
-                            var_type = TYPE_INT; // Default fallback
-                        }
+                    if (var_type == TYPE_NULL) {
+                        var_cls = class_from_construction(s, value);
+                        var_type = var_cls != NULL ? TYPE_CLASS : TYPE_INT;
                     }
-                    
-                    scope_define(s->scope, target->as.ident,
-                                 SYM_VAR, var_type, NULL, -1, false);
+
+                    if (!scope_define(s->scope, target->as.ident,
+                                      SYM_VAR, var_type, var_cls, -1, false)) {
+                        report(s, target->start, target->end,
+                               "out of memory while declaring variable");
+                        return false;
+                    }
+                } else {
+                    /* Existing variable: enforce assignment compatibility. */
+                    tess_type target_type = infer_expr_type(s, target);
+                    tess_type value_type = infer_expr_type(s, value);
+                    if (!can_assign(target_type, value_type) &&
+                        value_type != TYPE_NULL) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "cannot assign %s to %s",
+                                 type_label(value_type), type_label(target_type));
+                        report(s, st->start, st->end, msg);
+                        return false;
+                    }
                 }
             } else {
-                /* member assignment — object must resolve */
+                /* Member assignment: the object must resolve, and the field
+                 * type must accept the value. */
                 if (!check_expr(s, target)) return false;
+                tess_type target_type = infer_expr_type(s, target);
+                tess_type value_type = infer_expr_type(s, value);
+                if (!can_assign(target_type, value_type) &&
+                    value_type != TYPE_NULL && target_type != TYPE_NULL) {
+                    char msg[256];
+                    snprintf(msg, sizeof msg,
+                             "cannot assign %s to %s",
+                             type_label(value_type), type_label(target_type));
+                    report(s, st->start, st->end, msg);
+                    return false;
+                }
             }
             return true;
         }
@@ -660,14 +1007,21 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
             }
 
             tess_scope then_sc;
-            push_scope(s, &then_sc, false);
+            if (!push_scope(s, &then_sc, false)) {
+                report(s, st->start, st->end, "out of memory while analysing scope");
+                return false;
+            }
             bool ok = check_stmt(s, st->as.if_stmt.then_branch);
             pop_scope(s);
             if (!ok) return false;
 
             if (st->as.if_stmt.else_branch != NULL) {
                 tess_scope else_sc;
-                push_scope(s, &else_sc, false);
+                if (!push_scope(s, &else_sc, false)) {
+                    report(s, st->start, st->end,
+                           "out of memory while analysing scope");
+                    return false;
+                }
                 ok = check_stmt(s, st->as.if_stmt.else_branch);
                 pop_scope(s);
                 if (!ok) return false;
@@ -690,7 +1044,10 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
             }
             
             tess_scope body_sc;
-            push_scope(s, &body_sc, false);
+            if (!push_scope(s, &body_sc, false)) {
+                report(s, st->start, st->end, "out of memory while analysing scope");
+                return false;
+            }
             bool ok = check_stmt(s, st->as.while_stmt.body);
             pop_scope(s);
             return ok;
@@ -709,7 +1066,10 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
 
         case TESS_STMT_BLOCK: {
             tess_scope block_sc;
-            push_scope(s, &block_sc, false);
+            if (!push_scope(s, &block_sc, false)) {
+                report(s, st->start, st->end, "out of memory while analysing scope");
+                return false;
+            }
             for (size_t i = 0; i < st->as.block.count; i++) {
                 if (!check_stmt(s, st->as.block.items[i])) {
                     pop_scope(s);
@@ -723,31 +1083,53 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
         case TESS_STMT_CLASS: {
             tess_class *cls = st->as.class_decl;
 
-            /* Class name already pre-declared in pass 1; check for duplicate
-             * field / method names inside the class. */
-            tess_scope cls_ns;
-            memset(&cls_ns, 0, sizeof cls_ns);
-
+            /* Field types must name a primitive or a known class. */
             for (size_t i = 0; i < cls->field_count; i++) {
-                if (!scope_define(&cls_ns, cls->fields[i].name,
-                                  SYM_VAR, TYPE_INT, NULL, -1, false)) {
+                if (!type_name_known(s, cls->fields[i].type)) {
                     char msg[256];
                     snprintf(msg, sizeof msg,
-                             "duplicate field `%s` in class `%s`",
-                             cls->fields[i].name, cls->name);
+                             "unknown type `%s` for field `%s`",
+                             cls->fields[i].type ? cls->fields[i].type : "?",
+                             cls->fields[i].name);
                     report(s, cls->fields[i].start, cls->fields[i].end, msg);
                     return false;
                 }
             }
+
+            /* Duplicate field names. */
+            for (size_t i = 0; i < cls->field_count; i++) {
+                for (size_t j = 0; j < i; j++) {
+                    if (strcmp(cls->fields[i].name, cls->fields[j].name) == 0) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "duplicate field `%s` in class `%s`",
+                                 cls->fields[i].name, cls->name);
+                        report(s, cls->fields[i].start, cls->fields[i].end, msg);
+                        return false;
+                    }
+                }
+            }
+            /* Duplicate method names, and collisions with fields. */
             for (size_t i = 0; i < cls->method_count; i++) {
-                if (!scope_define(&cls_ns, cls->methods[i].name,
-                                  SYM_VAR, TYPE_NULL, NULL, -1, false)) {
-                    char msg[256];
-                    snprintf(msg, sizeof msg,
-                             "duplicate method `%s` in class `%s`",
-                             cls->methods[i].name, cls->name);
-                    report(s, cls->methods[i].start, cls->methods[i].end, msg);
-                    return false;
+                for (size_t j = 0; j < i; j++) {
+                    if (strcmp(cls->methods[i].name, cls->methods[j].name) == 0) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "duplicate method `%s` in class `%s`",
+                                 cls->methods[i].name, cls->name);
+                        report(s, cls->methods[i].start, cls->methods[i].end, msg);
+                        return false;
+                    }
+                }
+                for (size_t j = 0; j < cls->field_count; j++) {
+                    if (strcmp(cls->methods[i].name, cls->fields[j].name) == 0) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "member `%s` in class `%s` is both a field and a method",
+                                 cls->methods[i].name, cls->name);
+                        report(s, cls->methods[i].start, cls->methods[i].end, msg);
+                        return false;
+                    }
                 }
             }
 
@@ -758,32 +1140,63 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
             for (size_t i = 0; i < cls->method_count; i++) {
                 tess_method *m = &cls->methods[i];
                 tess_scope msc;
-                push_scope(s, &msc, true);
+                if (!push_scope(s, &msc, true)) {
+                    report(s, m->start, m->end,
+                           "out of memory while analysing method");
+                    s->current_class = saved_class;
+                    return false;
+                }
 
                 /* Declare 'self' as implicit first parameter */
                 scope_define(s->scope, "self", SYM_VAR, TYPE_CLASS, cls, -1, false);
-                
-                /* Declare parameters */
+
+                /* Declare parameters, rejecting duplicates and unknown types. */
                 for (size_t j = 0; j < m->param_count; j++) {
-                    tess_type param_type = TYPE_INT; // Default
-                    if (m->params[j].type != NULL) {
-                        if (strcmp(m->params[j].type, "int") == 0) param_type = TYPE_INT;
-                        else if (strcmp(m->params[j].type, "float") == 0) param_type = TYPE_FLOAT;
-                        else if (strcmp(m->params[j].type, "str") == 0) param_type = TYPE_STR;
-                        else if (strcmp(m->params[j].type, "bool") == 0) param_type = TYPE_BOOL;
+                    if (!type_name_known(s, m->params[j].type)) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "unknown type `%s` for parameter `%s`",
+                                 m->params[j].type ? m->params[j].type : "?",
+                                 m->params[j].name);
+                        report(s, m->start, m->end, msg);
+                        pop_scope(s);
+                        s->current_class = saved_class;
+                        return false;
                     }
-                    scope_define(s->scope, m->params[j].name,
-                                 SYM_VAR, param_type, NULL, -1, false);
+                    tess_class *param_cls = NULL;
+                    tess_type param_type = type_from_name(s, m->params[j].type,
+                                                          &param_cls);
+                    if (!scope_define(s->scope, m->params[j].name,
+                                      SYM_VAR, param_type, param_cls,
+                                      -1, false)) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "duplicate parameter `%s` in method `%s`",
+                                 m->params[j].name, m->name);
+                        report(s, m->start, m->end, msg);
+                        pop_scope(s);
+                        s->current_class = saved_class;
+                        return false;
+                    }
                 }
-                
-                /* Fields visible as bare names inside methods */
+
+                /* Fields are visible as bare names inside methods, carrying
+                 * their declared types. */
                 for (size_t j = 0; j < cls->field_count && !s->failed; j++) {
-                    if (scope_lookup_own(s->scope, cls->fields[j].name) == NULL)
+                    if (scope_lookup_own(s->scope, cls->fields[j].name) == NULL) {
+                        tess_class *field_cls = NULL;
+                        tess_type field_type = type_from_name(
+                            s, cls->fields[j].type, &field_cls);
                         scope_define(s->scope, cls->fields[j].name,
-                                     SYM_VAR, TYPE_INT, NULL, -1, false);
+                                     SYM_VAR, field_type, field_cls,
+                                     -1, false);
+                    }
                 }
-                
-                if (s->failed) break;
+
+                if (s->failed) {
+                    pop_scope(s);
+                    break;
+                }
 
                 bool ok = check_stmt(s, m->body);
                 pop_scope(s);
@@ -793,7 +1206,7 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                 }
             }
             s->current_class = saved_class;
-            return true;
+            return !s->failed;
         }
     }
     return true;
@@ -812,7 +1225,9 @@ bool tess_sema_check(tess_program *program, const char *src, const char *path) {
 
     /* Global scope */
     tess_scope global;
-    push_scope(&s, &global, false);
+    if (!push_scope(&s, &global, false)) {
+        return false; /* nothing to free: the table was never allocated */
+    }
 
     /* Register built-in functions */
     scope_define(s.scope, "put",    SYM_BUILTIN, TYPE_NULL, NULL, 1, false);
@@ -821,7 +1236,7 @@ bool tess_sema_check(tess_program *program, const char *src, const char *path) {
     scope_define(s.scope, "str",    SYM_BUILTIN, TYPE_STR, NULL, 1, false);
     scope_define(s.scope, "int",    SYM_BUILTIN, TYPE_INT, NULL, 1, false);
     scope_define(s.scope, "float",  SYM_BUILTIN, TYPE_FLOAT, NULL, 1, false);
-    scope_define(s.scope, "print",  SYM_BUILTIN, TYPE_NULL, NULL, -1, true);  /* variadic */
+    scope_define(s.scope, "print",  SYM_BUILTIN, TYPE_NULL, NULL, 1, false);
     scope_define(s.scope, "input",  SYM_BUILTIN, TYPE_STR, NULL, 0, false);
 
     /* Pass 1: pre-declare all top-level class names so they can be referenced

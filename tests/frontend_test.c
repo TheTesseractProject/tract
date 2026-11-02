@@ -249,6 +249,22 @@ static void test_escapes(void) {
     tess_program_free(program);
 }
 
+static void test_deep_nesting(void) {
+    /* Deeply nested expressions must be rejected instead of exhausting the
+     * parser stack. */
+    char src[6000];
+    size_t n = 0;
+    for (int i = 0; i < 2000; i++) {
+        n += (size_t)snprintf(src + n, sizeof src - n, "%s", "(");
+    }
+    n += (size_t)snprintf(src + n, sizeof src - n, "%s", "1");
+    for (int i = 0; i < 2000; i++) {
+        n += (size_t)snprintf(src + n, sizeof src - n, "%s", ")");
+    }
+    src[n] = '\0';
+    check(tess_parse(src, n, "deep.t") == NULL, "deep nesting is rejected");
+}
+
 static void test_errors(void) {
     check(tess_parse("put(\"x\")", strlen("put(\"x\")"), "missing_semi.t") ==
               NULL,
@@ -275,6 +291,7 @@ int main(void) {
     test_control_flow();
     test_escapes();
     test_errors();
+    test_deep_nesting();
     if (failures != 0) {
         fprintf(stderr, "%d frontend failure(s)\n", failures);
         return 1;

@@ -34,18 +34,165 @@ Every release adheres to these principles:
 | Version | Highlights | Status |
 |---------|------------|--------|
 | **0.0.1** | Lexer + Parser + Sema, CLI, demo examples | 🟢 Released |
-| **0.0.2** | Error diagnostics with location info, test suite foundation | 🟢 Planned |
-| **0.1** | AST optimization passes, initial C99 codegen | 🏗️ In Progress |
+| **0.0.2** | Error diagnostics with location info, test suite foundation | 🟢 Released |
+| **0.1** | AST optimization passes, initial C99 codegen | 🟢 Released |
+| **0.3 (Current)** | Complete C99 code generation, modular backend architecture, language syntax updates | 🏗️ In Progress |
 
 ---
 
-## 📅 Development Phases (0.2 → 1.0)
+## 📅 Development Phases (0.4 → 1.0)
 
 Each phase builds upon the previous one while maintaining API/ABI stability.
 
 ---
 
-### Phase 1: Version 0.2 — Quality Diagnostics & Testing
+### Phase X: Version 0.4 — Runtime Library & Executable Programs
+
+#### 🎯 Objectives
+
+Create a complete runtime library and ensure Terra programs compile to fully executable C99 code.
+
+#### ✨ Features
+
+##### 1. C99 Runtime Library (`terra_runtime.h`)
+
+```c
+// Memory management
+void* terramalloc(size_t bytes);
+void terrafree(void* ptr);
+
+// Standard I/O
+void put(int value);
+void put_str(const char* str);
+int input_int();
+char* input_str();
+
+// Type conversion
+int to_int(double d);
+double to_float(int i);
+const char* to_string(int i);
+
+// String manipulation (future)
+const char* concat(const char* a, const char* b);
+int len(const char* str);
+```
+
+##### 2. Object Lifecycle Management
+
+**Rules:**
+- Objects are allocated on heap at creation time
+- No garbage collection during program execution  
+- `let B = A` makes B reference the same object as A
+- No manual deallocation in current version
+
+**AST Representation:**
+```tesseract
+let obj = ClassName.init;      // Allocation happens in init()
+let ref = obj;                  // Reference copy
+obj.method(args);               // Method call via pointer
+```
+
+##### 3. Function Definitions
+
+**New syntax for functions:**
+```tesseract
+fn main() {
+    let x = 10;
+    let y = 20;
+    put(x + y);
+}
+
+fn multiply(a: int, b: int): int {
+    return a * b;
+}
+```
+
+Benefits:
+- Clear distinction between function declarations and calls
+- Consistent type notation (return type after parameters)
+- Easier parsing and better readability
+
+#### 📋 Deliverables
+
+- [ ] `terra_runtime.h` - Core runtime functions
+- [ ] Memory allocation/deallocation implementation
+- [ ] Standard I/O integration
+- [ ] Object creation semantics documentation
+- [ ] Function syntax parser support
+- [ ] Complete hello_world example compilation
+
+#### 📊 Success Criteria
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Hello world compilation | 100% | Compiles to executable binary |
+| Basic arithmetic ops | 100% | All examples run correctly |
+| Runtime performance | ≤ 2x | vs native GCC O2 |
+| Binary size overhead | ≤ 3x | vs equivalent C code |
+| Memory safety | 0 leaks | Valgrind clean |
+
+---
+
+### Phase 3: Version 0.5 — Optimizations & Multi-B Backend Support
+
+#### 🎯 Objectives
+
+Apply optimization passes and enable multiple target backends.
+
+#### ✨ Optimization Passes
+
+| Optimization | Priority | Description | Status |
+|--------------|----------|-------------|--------|
+| Constant Folding | High | Evaluate constant expressions | 🔵 Planned |
+| Dead Code Elimination | High | Remove unreachable code | 🔵 Planned |
+| Inline Expansion | Medium | Embed small functions | 🟡 Next |
+| Loop Unrolling | Medium | Expand loop iterations | 🔮 Future |
+
+#### ✨ Multi-B Backend Architecture
+
+**Supported Backends:**
+- **C99 Backend** (✅ Implemented) - Production-ready
+- **LLVM IR Backend** (🔵 Planned) - Max performance
+- **WebAssembly Backend** (🔮 Future) - Web/edge deployment
+
+**Backend Interface:**
+```c
+backend_codegen* backend_create_c99(config);
+backend_codegen* backend_create_llvm(config);
+backend_codegen* backend_create_wasm(config);
+
+bool backend_generate(backend, ast, output_buffer);
+```
+
+Usage:
+```bash
+terra build --emit c99 program.t -o program.c
+clang -O2 program.c -o program
+
+terra build --emit llvm program.t -o program.ll
+opt -O3 program.ll -o program_opt.ll
+clang program_opt.ll -o program
+
+terra build --emit wasm program.t -o program.wasm
+node program.wasm
+```
+
+#### 📋 Deliverables
+
+- [ ] AST optimization pipeline
+- [ ] LLVM IR backend (via llvm-capi)
+- [ ] WASM binary format writer
+- [ ] Cross-compilation toolchain support
+- [ ] Backend abstraction layer tests
+
+#### 📊 Success Criteria
+
+| Metric | Target | Platform |
+|--------|--------|----------|
+| LLVM IR validity | Passes `opt -O3` | All LLVM versions |
+| WASM execution | Runs in browser | Chrome, Firefox, Edge |
+| WASM execution | Runs in Node.js | v18+ |
+| Performance (LLVM) | ≥ 1.5x better | vs C99 backend |
 
 #### 🎯 Objectives
 
