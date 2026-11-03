@@ -19,6 +19,7 @@ typedef struct {
     bool to_stdout;   /* --stdout / -o -: write generated C to stdout    */
     bool compile;     /* --compile: compile generated C into an executable */
     bool freestanding;
+    bool safe;        /* --safe: runtime-checked arithmetic and indexing */
     bool quiet;       /* -q/--quiet: suppress progress messages          */
 } cmd_data;
 

@@ -42,6 +42,7 @@ int main(int argc, char *argv[]) {
                 .c_compiler = cmd_result.c_compiler,
                 .target_triple = cmd_result.target_triple,
                 .freestanding = cmd_result.freestanding,
+                .safe = cmd_result.safe,
             };
             bool build_success = engine_build_file(input_file, cmd_result.path,
                                                    cmd_result.output, &options);

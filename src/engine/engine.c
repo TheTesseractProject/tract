@@ -238,7 +238,7 @@ char* generate_c99_code_from_program(tess_program *program, const char *path,
 
     // Generate C99 code from AST into a freshly allocated buffer.
     char *buffer = c99_codegen_generate_mode(program,
-        opts != NULL && opts->freestanding);
+        opts != NULL && opts->freestanding, opts != NULL && opts->safe);
     if (!buffer) {
         if (opts != NULL && opts->freestanding)
             ERRLN("Freestanding output cannot contain classes, hosted runtime helpers, or top-level executable statements");

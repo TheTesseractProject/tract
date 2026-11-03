@@ -1250,6 +1250,13 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             if ((expr->as.index.object != NULL &&
                  expr->as.index.object->kind == TESS_EXPR_SLICE) ||
                 (slice_type != NULL && strcmp(slice_type, "terra_slice") == 0)) {
+                if (gen->safe) {
+                    append_str(gen, "((void)terra_check_index((long long)(");
+                    c99_codegen_expr(gen, expr->as.index.index);
+                    append_str(gen, "), (long long)(");
+                    c99_codegen_expr(gen, expr->as.index.object);
+                    append_str(gen, ").len)), ");
+                }
                 append_str(gen, "((");
                 append_str(gen, tess_type_to_c(expr_element_type(gen, expr->as.index.object)));
                 append_str(gen, "*)(("); c99_codegen_expr(gen, expr->as.index.object);
@@ -1257,9 +1264,25 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                 append_str(gen, "]");
                 break;
             }
+            bool idx_checked = false;
+            if (gen->safe && expr->as.index.object != NULL &&
+                expr->as.index.object->kind == TESS_EXPR_IDENT &&
+                get_var_class(gen, expr->as.index.object->as.ident) != NULL &&
+                strcmp(get_var_class(gen, expr->as.index.object->as.ident),
+                       "fixedarray") == 0) {
+                idx_checked = true;
+                append_str(gen, "((void)terra_check_index((long long)(");
+                c99_codegen_expr(gen, expr->as.index.index);
+                append_str(gen, "), (long long)(sizeof(");
+                c99_codegen_expr(gen, expr->as.index.object);
+                append_str(gen, ") / sizeof((");
+                c99_codegen_expr(gen, expr->as.index.object);
+                append_str(gen, ")[0]))), ");
+            }
             append_str(gen, "("); c99_codegen_expr(gen, expr->as.index.object);
             append_str(gen, "["); c99_codegen_expr(gen, expr->as.index.index);
             append_str(gen, "])");
+            if (idx_checked) append_str(gen, ")");
             break;
         }
         case TESS_EXPR_ARRAY: {
@@ -1728,8 +1751,37 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                 append_fprintf(gen, ") %s", tail);
                 break;
             }
+            /* Safe mode: plain integer arithmetic goes through checked
+             * helpers that panic on overflow and division by zero. Pointer
+             * arithmetic and float math stay on raw C operators. */
+            bool checked_arith = false;
+            if (gen->safe &&
+                expr->as.binary.op >= TESS_BIN_ADD &&
+                expr->as.binary.op <= TESS_BIN_MOD &&
+                !lhs_str && !rhs_str) {
+                const char *tn = expr_type_name(gen, expr);
+                const char *ln = expr_type_name(gen, expr->as.binary.lhs);
+                const char *rn = expr_type_name(gen, expr->as.binary.rhs);
+                checked_arith = tn != NULL && strcmp(tn, "long long") == 0 &&
+                    ln != NULL && rn != NULL &&
+                    strchr(ln, '*') == NULL && strchr(rn, '*') == NULL;
+            }
+            if (checked_arith) {
+                static const char *const checked_ops[] = {
+                    "terra_checked_add", "terra_checked_sub",
+                    "terra_checked_mul", "terra_checked_div",
+                    "terra_checked_mod"
+                };
+                append_str(gen, checked_ops[expr->as.binary.op - TESS_BIN_ADD]);
+                append_str(gen, "(");
+                c99_codegen_expr(gen, expr->as.binary.lhs);
+                append_str(gen, ", ");
+                c99_codegen_expr(gen, expr->as.binary.rhs);
+                append_str(gen, ")");
+                break;
+            }
             c99_codegen_expr(gen, expr->as.binary.lhs);
-            
+
             switch (expr->as.binary.op) {
                 case TESS_BIN_OR: append_str(gen, " || "); break;
                 case TESS_BIN_AND: append_str(gen, " && "); break;
@@ -2752,6 +2804,44 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
         append_str(gen,
             "TERRA_MAYBE_UNUSED static void terra_panic(const char* msg){ fprintf(stderr, \"runtime error: %s\\n\", msg); exit(1); }\n");
     }
+    if (gen->safe) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_check_index(long long i, long long n){\n"
+            "    if(i < 0 || i >= n) terra_panic(\"index out of range\");\n"
+            "    return i;\n"
+            "}\n");
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_checked_add(long long a, long long b){\n"
+            "    if((b > 0 && a > LLONG_MAX - b) || (b < 0 && a < LLONG_MIN - b)) terra_panic(\"integer overflow\");\n"
+            "    return a + b;\n"
+            "}\n");
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_checked_sub(long long a, long long b){\n"
+            "    if((b < 0 && a > LLONG_MAX + b) || (b > 0 && a < LLONG_MIN + b)) terra_panic(\"integer overflow\");\n"
+            "    return a - b;\n"
+            "}\n");
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_checked_mul(long long a, long long b){\n"
+            "    if(a == 0 || b == 0) return 0;\n"
+            "    if(a == -1){ if(b == LLONG_MIN) terra_panic(\"integer overflow\"); return -b; }\n"
+            "    if(b == -1){ if(a == LLONG_MIN) terra_panic(\"integer overflow\"); return -a; }\n"
+            "    long long r = a * b;\n"
+            "    if(r / b != a) terra_panic(\"integer overflow\");\n"
+            "    return r;\n"
+            "}\n");
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_checked_div(long long a, long long b){\n"
+            "    if(b == 0) terra_panic(\"division by zero\");\n"
+            "    if(a == LLONG_MIN && b == -1) terra_panic(\"integer overflow\");\n"
+            "    return a / b;\n"
+            "}\n");
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_checked_mod(long long a, long long b){\n"
+            "    if(b == 0) terra_panic(\"modulo by zero\");\n"
+            "    if(a == LLONG_MIN && b == -1) terra_panic(\"integer overflow\");\n"
+            "    return a % b;\n"
+            "}\n");
+    }
     if (gen->runtime_used & RT_STR_AT) {
         append_str(gen,
             "TERRA_MAYBE_UNUSED static inline int terra_str_at(const char* s, long long i){\n"
@@ -3008,6 +3098,7 @@ static bool prepend_runtime_block(c99_codegen *gen) {
     rt.runtime_used = gen->runtime_used;
     rt.program = gen->program;
     rt.freestanding = gen->freestanding;
+    rt.safe = gen->safe;
     if (rt.freestanding) {
         bool has_class = false;
         for (size_t i = 0; i < gen->program->count; i++)
@@ -3095,10 +3186,11 @@ static char *c99_codegen_run(c99_codegen *gen, tess_program *program) {
 }
 
 char *c99_codegen_generate(tess_program *program) {
-    return c99_codegen_generate_mode(program, false);
+    return c99_codegen_generate_mode(program, false, false);
 }
 
-char *c99_codegen_generate_mode(tess_program *program, bool freestanding) {
+char *c99_codegen_generate_mode(tess_program *program, bool freestanding,
+                                bool safe) {
     if (!program) {
         return NULL;
     }
@@ -3109,6 +3201,8 @@ char *c99_codegen_generate_mode(tess_program *program, bool freestanding) {
     }
     gen.program = program;
     gen.freestanding = freestanding;
+    gen.safe = safe && !freestanding;
+    if (gen.safe) gen.runtime_used |= RT_PANIC;
     c99_codegen_collect_modules(&gen, program);
 
     char *result = c99_codegen_run(&gen, program);

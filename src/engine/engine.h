@@ -12,6 +12,7 @@ typedef struct {
     const char *c_compiler; /* compiler executable path; defaults to `cc` */
     const char *target_triple; /* optional cross-compilation target */
     bool freestanding;
+    bool safe;       /* runtime-checked arithmetic and indexing */
 } terra_build_options;
 
 bool engine_build_file(FILE *input_file, const char *input_path,

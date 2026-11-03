@@ -4,10 +4,15 @@
 #   TERRA     - path to the terra compiler binary
 #   COMPILER  - C compiler used to build the generated code
 #   SOURCE    - Tesseract source file to compile
-#   EXPECT    - substring expected in the program output
+#   EXPECT    - substring expected in the program output (ignored when
+#               EXPECT_PANIC is set)
 #   WORK      - scratch directory for generated artifacts
+#
+# Optional variables:
+#   SAFE_MODE    - pass --safe to terra
+#   EXPECT_PANIC - require the program to fail with a "runtime error" message
 
-foreach(var TERRA COMPILER SOURCE EXPECT WORK)
+foreach(var TERRA COMPILER SOURCE WORK)
     if(NOT DEFINED ${var})
         message(FATAL_ERROR "e2e.cmake: missing required variable ${var}")
     endif()
@@ -17,8 +22,13 @@ file(MAKE_DIRECTORY "${WORK}")
 set(generated "${WORK}/program.c")
 set(binary "${WORK}/program")
 
+set(terra_args "${SOURCE}" -o "${generated}")
+if(SAFE_MODE)
+    list(APPEND terra_args --safe)
+endif()
+
 execute_process(
-    COMMAND "${TERRA}" "${SOURCE}" -o "${generated}"
+    COMMAND "${TERRA}" ${terra_args}
     RESULT_VARIABLE terra_result
     OUTPUT_VARIABLE terra_stdout
     ERROR_VARIABLE terra_stderr
@@ -51,6 +61,20 @@ execute_process(
     OUTPUT_VARIABLE run_stdout
     ERROR_VARIABLE run_stderr
 )
+
+if(EXPECT_PANIC)
+    if(run_result EQUAL 0)
+        message(FATAL_ERROR
+            "program was expected to panic but succeeded\nstdout:\n${run_stdout}")
+    endif()
+    string(FIND "${run_stderr}" "runtime error" panic_pos)
+    if(panic_pos EQUAL -1)
+        message(FATAL_ERROR
+            "program failed without a runtime error message\nstderr:\n${run_stderr}")
+    endif()
+    return()
+endif()
+
 if(NOT run_result EQUAL 0)
     message(FATAL_ERROR
         "generated program failed (${run_result})\nstdout:\n${run_stdout}\nstderr:\n${run_stderr}")

@@ -108,6 +108,7 @@ COLOR_BRIGHT_WHITE "Available options" COLOR_RESET "\n"\
 "    --cc <path>          Select the C compiler (requires --compile)\n"\
 "    --target <triple>    Cross-compile with the selected C compiler\n"\
 "    --freestanding       Emit a freestanding relocatable object (.o)\n"\
+"    --safe               Runtime-check arithmetic and indexing\n"\
 "-q, --quiet             Suppress progress messages\n"\
 "    --                  Treat every following argument as a path\n\n"\
 \

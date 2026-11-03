@@ -69,6 +69,7 @@ cmd_data parse_cmd(int argc, char* argv[]) {
     data.to_stdout = false;
     data.compile = false;
     data.freestanding = false;
+    data.safe = false;
     data.quiet = false;
 
     if (argc <= 1) {
@@ -122,6 +123,10 @@ cmd_data parse_cmd(int argc, char* argv[]) {
             }
             if (strcmp(arg, "--freestanding") == 0) {
                 data.freestanding = true;
+                continue;
+            }
+            if (strcmp(arg, "--safe") == 0) {
+                data.safe = true;
                 continue;
             }
             if (strcmp(arg, "-b") == 0 || strcmp(arg, "--build") == 0) {
@@ -227,7 +232,8 @@ cmd_data parse_cmd(int argc, char* argv[]) {
     } else if (data.path != NULL) {
         data.action = BUILD_FILE;
     } else if (data.check_only || data.output != NULL || data.to_stdout ||
-               data.compile || data.c_compiler != NULL || data.target_triple != NULL || data.freestanding) {
+               data.compile || data.c_compiler != NULL || data.target_triple != NULL ||
+               data.freestanding || data.safe) {
         ERRLN(ERR_BUILD_FILE_NOT_SPECIFIED);
         set_error(&data);
     } else {

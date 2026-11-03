@@ -97,6 +97,29 @@ static void test_string_methods(void) {
     tess_program_free(program);
 }
 
+static void test_safe_mode(void) {
+    const char *src = "let a = 2;\nput(a + 3);\nlet nums = [1, 2];\nput(nums[0]);\n";
+    tess_program *program = parse("safe.t", src);
+    check(program != NULL, "safe-mode program parses");
+    if (program == NULL) return;
+
+    check(tess_sema_check(program, src, "safe.t"), "safe-mode program passes sema");
+
+    char *code = c99_codegen_generate_mode(program, false, true);
+    check(code != NULL, "safe-mode code generation succeeds");
+    if (code != NULL) {
+        check(strstr(code, "terra_checked_add(a, 3)") != NULL,
+              "safe mode wraps integer addition in a checked helper");
+        check(strstr(code, "terra_check_index") != NULL,
+              "safe mode bounds-checks array indexing");
+        check(strstr(code, "void terra_panic(const char* msg)") != NULL,
+              "safe mode emits the panic helper");
+        free(code);
+    }
+
+    tess_program_free(program);
+}
+
 static void test_large_generation(void) {
     /* Enough top-level assignments to push the generated C past the old
      * fixed 64 KiB output buffer. Parsing only: the point is buffer growth. */
@@ -255,6 +278,7 @@ int main(void) {
     test_basic_generation();
     test_put_string_variable();
     test_string_methods();
+    test_safe_mode();
     test_large_generation();
     test_builtins();
     test_string_escaping();

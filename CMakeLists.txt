@@ -148,6 +148,18 @@ if(BUILD_TESTING)
             -DSOURCE=${CMAKE_SOURCE_DIR}/examples/class.t
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli.cmake
     )
+
+    # --safe mode: out-of-range indexing must panic at run time.
+    add_test(NAME e2e_safe_panic
+        COMMAND ${CMAKE_COMMAND}
+            -DTERRA=$<TARGET_FILE:${PROJECT_NAME}>
+            -DCOMPILER=${CMAKE_C_COMPILER}
+            -DSOURCE=${CMAKE_SOURCE_DIR}/examples/safe_panic.t
+            -DSAFE_MODE=1
+            -DEXPECT_PANIC=1
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/e2e_safe_panic
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e.cmake
+    )
 endif()
 
 # Install target

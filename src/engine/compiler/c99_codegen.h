@@ -34,6 +34,7 @@ typedef struct {
     bool in_function;          // Currently inside a top-level fn or method body
     bool fn_returns_void;      // The function being generated returns no value
     bool freestanding;
+    bool safe;                 // Emit runtime-checked arithmetic and indexing
 } c99_codegen;
 
 /**
@@ -57,7 +58,8 @@ void c99_codegen_destroy(c99_codegen *gen);
  *         NULL on error. Free it with free().
  */
 char *c99_codegen_generate(tess_program *program);
-char *c99_codegen_generate_mode(tess_program *program, bool freestanding);
+char *c99_codegen_generate_mode(tess_program *program, bool freestanding,
+                                bool safe);
 
 /**
  * @brief Generate C99 code for an imported module (module-scoped functions).
