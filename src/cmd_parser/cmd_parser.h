@@ -6,8 +6,7 @@ typedef enum {
     ERROR,
     HELP,
     VERSION,
-    BUILD_FILE,
-    ANIMATION
+    BUILD_FILE
 } cmd_action;
 
 typedef struct {

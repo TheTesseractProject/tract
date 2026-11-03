@@ -55,7 +55,7 @@ Rules of the queue:
 | **0.0.1** | Lexer + Parser + Sema, CLI, demo examples | 🟢 Released |
 | **0.0.2** | Error diagnostics with location info, test suite foundation | 🟢 Released |
 | **0.1** | AST optimization passes, initial C99 codegen | 🟢 Released |
-| **0.3 (Current)** | Complete C99 code generation, modular backend architecture, language syntax updates | 🏗️ In Progress |
+| **0.3.0 (Current)** | Complete C99 code generation, modular backend architecture, language syntax updates | 🏗️ In Progress |
 
 ---
 

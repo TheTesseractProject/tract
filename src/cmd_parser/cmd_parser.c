@@ -59,7 +59,6 @@ cmd_data parse_cmd(int argc, char* argv[]) {
 
     bool want_help = false;
     bool want_version = false;
-    bool want_animation = false;
     bool end_of_options = false;
 
     for (int i = 1; i < argc; i++) {
@@ -84,10 +83,6 @@ cmd_data parse_cmd(int argc, char* argv[]) {
             if (strcmp(arg, "-v") == 0 || strcmp(arg, "-V") == 0 ||
                 strcmp(arg, "--version") == 0) {
                 want_version = true;
-                continue;
-            }
-            if (strcmp(arg, "--tesseract") == 0) {
-                want_animation = true;
                 continue;
             }
             if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
@@ -169,8 +164,6 @@ cmd_data parse_cmd(int argc, char* argv[]) {
         data.action = VERSION;
     } else if (want_help) {
         data.action = HELP;
-    } else if (want_animation) {
-        data.action = ANIMATION;
     } else if (data.path != NULL) {
         data.action = BUILD_FILE;
     } else if (data.check_only || data.output != NULL || data.to_stdout) {

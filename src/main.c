@@ -2,7 +2,6 @@
 
 #include "constants.h"
 #include "cmd_parser/cmd_parser.h"
-#include "tesseract_animation/tesseract_animation.h"
 #include "file_check/file_check.h"
 #include "engine/engine.h"
 
@@ -20,6 +19,7 @@ int main(int argc, char *argv[]) {
         }
         case VERSION: {
             MSG(VERSION_TEXT);
+            MSG(TESSERACT_ANIMATION_END);
             break;
         }
         case BUILD_FILE: {
@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
                 ERRLN(ERR_BUILD_FILE_NOT_SPECIFIED);
                 return 1;
             }
-            
+
             FILE *input_file = file_open(cmd_result.path);
             if (!input_file) {
                 ERRLN(TERRA_ACCESS_ERROR);
@@ -47,11 +47,7 @@ int main(int argc, char *argv[]) {
                 ERRLN(TERRA_BUILD_ERROR);
                 return 1;
             }
-            
-            break;
-        }
-        case ANIMATION: {
-            tesseract_animation();
+
             break;
         }
     }

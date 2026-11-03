@@ -2,7 +2,7 @@
 #
 # Required variables: TERRA (compiler binary), SOURCE (a valid .t example)
 
-foreach(var TERRA SOURCE)
+foreach(var TERRA TERRA_VERSION SOURCE)
     if(NOT DEFINED ${var})
         message(FATAL_ERROR "cli.cmake: missing required variable ${var}")
     endif()
@@ -21,8 +21,12 @@ endfunction()
 
 # --version / -v
 run_expect_ok("${TERRA}" -v)
-if(NOT LAST_OUT MATCHES "0\\.2\\.0")
+string(REPLACE "." "[.]" TERRA_VERSION_REGEX "${TERRA_VERSION}")
+if(NOT LAST_OUT MATCHES "${TERRA_VERSION_REGEX}")
     message(FATAL_ERROR "version output missing version number:\n${LAST_OUT}")
+endif()
+if(NOT LAST_OUT MATCHES ",--\\.")
+    message(FATAL_ERROR "version output missing Tesseract ending:\n${LAST_OUT}")
 endif()
 
 run_expect_ok("${TERRA}" --version)

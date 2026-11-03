@@ -113,8 +113,6 @@ rm -rf bin/ build/
 # Write the generated C to stdout
 ./bin/terra input.tt --stdout
 
-# Show tesseract animation
-./bin/terra --tesseract
 ```
 
 > Terra emits C99-style source that uses a few GNU extensions (`__auto_type`,
@@ -132,7 +130,6 @@ rm -rf bin/ build/
 | `-c` | `--check` | Parse and type-check only, do not generate C |
 | | `--stdout` | Write generated C to standard output |
 | `-q` | `--quiet` | Suppress progress messages |
-| | `--tesseract` | Show ASCII tesseract animation |
 | | `--` | Treat all following arguments as paths |
 
 ### Supported File Extensions

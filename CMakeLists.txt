@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(terra VERSION 0.2.0 LANGUAGES C)
+project(terra VERSION 0.3.0 LANGUAGES C)
 
 # Set C standard
 set(CMAKE_C_STANDARD 23)
@@ -33,6 +33,9 @@ message("Detected sources: ${SOURCES}")
 
 # Add executable target
 add_executable(${PROJECT_NAME} ${SOURCES})
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    TERRA_VERSION="${PROJECT_VERSION}"
+)
 # Common core (lives under src/core)
 add_subdirectory(src/core)
 include_directories("src" "src/core/include")
@@ -108,6 +111,7 @@ if(BUILD_TESTING)
     add_test(NAME cli
         COMMAND ${CMAKE_COMMAND}
             -DTERRA=$<TARGET_FILE:${PROJECT_NAME}>
+            -DTERRA_VERSION=${PROJECT_VERSION}
             -DSOURCE=${CMAKE_SOURCE_DIR}/examples/class.t
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli.cmake
     )

@@ -11,9 +11,7 @@
 #define ERRLN(str) do { fputs(str, stderr); fputc('\n', stderr); } while(0)
 #define ERRFLN(str, ...) do { fprintf(stderr, str, __VA_ARGS__); fputc('\n', stderr); } while(0)
 
-#define TERRA_VERSION "0.2.0"
 #define TERRA_CODENAME "alpha"
-#define VER TERRA_VERSION "-" TERRA_CODENAME
 
 #if defined(_WIN32)
 #define TERRA_PLATFORM "Windows"
@@ -105,7 +103,6 @@ COLOR_BRIGHT_WHITE "Available options" COLOR_RESET "\n"\
 "-c, --check             Parse and type-check only, do not generate C\n"\
 "    --stdout            Write generated C to standard output\n"\
 "-q, --quiet             Suppress progress messages\n"\
-"    --tesseract         Spawn a beautiful ASCII 4D tesseract animation\n"\
 "    --                  Treat every following argument as a path\n\n"\
 \
 COLOR_BRIGHT_WHITE "Usage" COLOR_RESET "\n"\
@@ -113,10 +110,6 @@ COLOR_GRAY "terra <path> [-o output.c]\n"\
 "terra --check <path>\n"\
 "terra --version" COLOR_RESET "\n\n"
 
-#define TESSERACT_ANIMATION_TEXT TERRA " BUILD TOOL FOR " COLOR_BRIGHT_WHITE "TESSERACT" COLOR_RESET "\nVersion: " COLOR_BRIGHT_WHITE VER COLOR_RESET ", UwU! (Quit - 'Q')"
-#define TESSERACT_ANIMATION_CHAR_ASPECT_TEXT "Use left/right arrow keys to adjust\nthe width until it looks like a square.\nPress Enter when it's right.\n\n"
-#define TESSERACT_ANIMATION_TOO_SMALL "Too small :("
-#define TESSERACT_ANIMATION_GRADIENT "@&Xx+;:,. "
 #define TESSERACT_ANIMATION_END \
 "                            ,--.\n"\
 "                           {    }\n"\
