@@ -22,7 +22,8 @@ enum {
     RT_FLOAT_INT  = 1u << 9,
     RT_FLOAT_STR  = 1u << 10,
     RT_ASSERT     = 1u << 11,
-    RT_INPUT      = 1u << 12
+    RT_INPUT      = 1u << 12,
+    RT_PUT_LEN    = 1u << 13
 };
 
 /**
@@ -1433,7 +1434,22 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                        (strcmp(call_name, "put") == 0 ||
                         strcmp(call_name, "print") == 0 ||
                         strcmp(call_name, "putln") == 0)) {
-                /* Dispatch by argument type: put_int / put_float / put_str. */
+                /* Dispatch by argument type: put_int / put_float / put_str.
+                 * String literals carry their byte length in the AST, so they
+                 * print through embedded NULs via the length-aware put_len. */
+                if (arg0->kind == TESS_EXPR_STRING) {
+                    gen->runtime_used |= RT_PUT_LEN;
+                    append_str(gen, "put_len(");
+                    append_c_string_literal(gen, arg0->as.string.data,
+                                            arg0->as.string.len);
+                    char lenbuf[32];
+                    snprintf(lenbuf, sizeof lenbuf, "%zu",
+                             arg0->as.string.len);
+                    append_str(gen, ", ");
+                    append_str(gen, lenbuf);
+                    append_str(gen, ")");
+                    break;
+                }
                 if (expr_is_string_like(gen, arg0) || expr_is_null(gen, arg0)) {
                     gen->runtime_used |= RT_PUT_STR;
                     append_str(gen, "put_str");
@@ -2564,6 +2580,10 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
     if (gen->runtime_used & RT_PUT_STR) {
         append_str(gen,
             "TERRA_MAYBE_UNUSED static inline void put_str(const char* s){ printf(\"%s\\n\", s ? s : \"(null)\"); }\n");
+    }
+    if (gen->runtime_used & RT_PUT_LEN) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline void put_len(const char* s, size_t n){ if(s) fwrite(s, 1, n, stdout); putchar('\\n'); }\n");
     }
     if (gen->runtime_used & RT_CONCAT) {
         append_str(gen,

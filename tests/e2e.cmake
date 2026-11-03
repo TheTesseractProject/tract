@@ -61,3 +61,13 @@ if(found EQUAL -1)
     message(FATAL_ERROR
         "program output did not contain '${EXPECT}'\nactual output:\n${run_stdout}")
 endif()
+
+# Optional exact byte count, for outputs that embed NUL bytes which the
+# substring check above cannot represent.
+if(DEFINED EXPECT_LEN)
+    string(LENGTH "${run_stdout}" actual_len)
+    if(NOT actual_len EQUAL EXPECT_LEN)
+        message(FATAL_ERROR
+            "program output length mismatch: expected ${EXPECT_LEN}, got ${actual_len}\nactual output:\n${run_stdout}")
+    endif()
+endif()

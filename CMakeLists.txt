@@ -94,7 +94,7 @@ if(BUILD_TESTING)
     # The list covers the plain (.t) examples plus the .tes extension form.
     foreach(example class hello_world even_odd matrix_mult linked_classes
                     math_demo test_example.tes system_features record_abi
-                    multidim_array)
+                    multidim_array string_nul)
         if(example STREQUAL "class")
             set(example_expect "world")
         elseif(example STREQUAL "hello_world")
@@ -113,6 +113,9 @@ if(BUILD_TESTING)
             set(example_expect "62")
         elseif(example STREQUAL "multidim_array")
             set(example_expect "9")
+        elseif(example STREQUAL "string_nul")
+            set(example_expect "after")
+            set(example_expect_len 14)
         else()
             set(example_expect "Product")
         endif()
@@ -128,6 +131,7 @@ if(BUILD_TESTING)
                 -DCOMPILER=${CMAKE_C_COMPILER}
                 -DSOURCE=${example_source}
                 -DEXPECT=${example_expect}
+                $<$<BOOL:${example_expect_len}>:-DEXPECT_LEN=${example_expect_len}>
                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/e2e_${test_name}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e.cmake
         )
