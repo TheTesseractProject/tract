@@ -170,3 +170,16 @@ execute_process(COMMAND "${TERRA}" -- --quiet "${SOURCE}"
 if(sep_result EQUAL 0)
     message(FATAL_ERROR "-- separator was ignored: --quiet treated as an option")
 endif()
+
+# A separated option value may itself start with `-` (e.g. a path named
+# `-out.c`); the `--output=` form stays as the unambiguous alternative.
+set(dash_file "${WORK}/-out.c")
+execute_process(COMMAND "${TERRA}" "${SOURCE}" -o "${dash_file}" --quiet
+    RESULT_VARIABLE dashval_result)
+if(NOT dashval_result EQUAL 0)
+    message(FATAL_ERROR "-o <path starting with '-'> failed")
+endif()
+file(READ "${dash_file}" dash_content)
+if(NOT dash_content MATCHES "int main")
+    message(FATAL_ERROR "-o <path starting with '-'> produced wrong content")
+endif()

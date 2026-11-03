@@ -9,6 +9,19 @@ static void set_error(cmd_data *data) {
     data->action = ERROR;
 }
 
+/* Options recognized in the separated form (`-o <value>`); a value that
+ * exactly matches one of these is treated as a missing value rather than
+ * a path, so a typo like `-o --stdout` stays an error. */
+static const char *const known_options[] = {
+    "-h", "--help", "-v", "--version", "-c", "--check", "--stdout",
+    "--compile", "--freestanding", "-b", "--build", "-o", "--output",
+    "--cc", "--target", "--quiet", "--", NULL
+};
+
+/* Consume the value of an option given in the separated form. Values
+ * starting with `-` are accepted, so paths literally named `-foo` are
+ * spellable; the `--output=<value>` form remains the unambiguous
+ * alternative. */
 static bool take_value(int *i, int argc, char *argv[], const char *missing_msg,
                        char **out) {
     if (*i + 1 >= argc) {
@@ -16,9 +29,11 @@ static bool take_value(int *i, int argc, char *argv[], const char *missing_msg,
         return false;
     }
     char *value = argv[*i + 1];
-    if (value[0] == '-' && value[1] != '\0') {
-        ERRFLN(ERR_BAD_ARGUMENT, value);
-        return false;
+    for (size_t k = 0; known_options[k] != NULL; k++) {
+        if (strcmp(value, known_options[k]) == 0) {
+            ERRFLN(ERR_BAD_ARGUMENT, value);
+            return false;
+        }
     }
     *out = value;
     (*i)++;
