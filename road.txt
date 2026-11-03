@@ -11,6 +11,6 @@
 [x] - Tests: add e2e coverage for the `.tes` and `.tt` extensions and for `--stdout`, `-o -`, `--output=`, `--build=` and the `--` separator; only a subset is covered today.
 [x] - Repo: remove the leftover `debug.log` from the working tree (it is gitignored but confuses local runs).
 [x] - Runtime: `put`/`print` of a string containing an embedded NUL (escape `\0`) truncates the output; pass the stored length to the helper. (Done: string literals now emit `put_len(literal, len)` with a fwrite-based helper; non-literal strings keep `put_str`. e2e driver gained an optional EXPECT_LEN byte-count check, new examples/string_nul.t.)
-[] - Sema: diagnose constant division/modulo by zero (`put(1/0);`) instead of emitting UB into the generated C.
+[x] - Sema: diagnose constant division/modulo by zero (`put(1/0);`) instead of emitting UB into the generated C. (Done: `check_expr` rejects constant-zero integer divisors, including `-0`; float division by zero stays IEEE-defined and non-constant divisors are untouched.)
 [] - CLI: `take_value` rejects any value starting with `-`, so output paths literally named `-foo` are unspellable; allow after `=` forms.
 [] - Build: decide the fate of the no-op `CORE_PROFILE=RUNTIME` option in src/core (it compiles identical code to FULL).

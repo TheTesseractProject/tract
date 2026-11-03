@@ -136,6 +136,16 @@ static void test_return_outside_method(void) {
     check(sema_err("return 1;\n"), "top-level return is rejected");
 }
 
+static void test_constant_divmod_zero(void) {
+    check(sema_err("put(1/0);\n"),   "integer division by zero is rejected");
+    check(sema_err("put(1%0);\n"),   "integer modulo by zero is rejected");
+    check(sema_err("put(1/-0);\n"),  "negated zero divisor is rejected");
+    check(sema_ok("put(1/2);\n"),    "nonzero integer division passes");
+    check(sema_ok("put(1.0/0.0);\n"),"float division by zero passes (IEEE)");
+    check(sema_ok("d = 0;\nput(1/d);\n"),
+          "division by a non-constant zero variable passes");
+}
+
 static void test_duplicate_class(void) {
     check(sema_err("A { x: int; }\nA { y: str; }\n"),
           "duplicate class name is rejected");
@@ -246,6 +256,7 @@ int main(void) {
     test_bad_lvalue();
     test_arity_mismatch();
     test_return_outside_method();
+    test_constant_divmod_zero();
     test_duplicate_class();
     test_unknown_member();
     test_duplicate_field();

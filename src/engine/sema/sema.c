@@ -961,6 +961,16 @@ static bool is_lvalue(tess_expr *e) {
                          (e->kind == TESS_EXPR_UNARY && e->as.unary.op == TESS_UN_DEREFERENCE));
 }
 
+/* True for an integer expression that provably evaluates to zero at
+ * compile time: a literal 0, optionally negated. */
+static bool is_constant_zero_int(const tess_expr *e) {
+    if (e == NULL) return false;
+    if (e->kind == TESS_EXPR_INT) return e->as.int_value == 0;
+    if (e->kind == TESS_EXPR_UNARY && e->as.unary.op == TESS_UN_NEG)
+        return is_constant_zero_int(e->as.unary.operand);
+    return false;
+}
+
 /* -------------------------------------------------------------------------
  * Expression checker with type checking
  * ------------------------------------------------------------------------- */
@@ -1396,7 +1406,19 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
             tess_type lhs_type = infer_expr_type(s, e->as.binary.lhs);
             tess_type rhs_type = infer_expr_type(s, e->as.binary.rhs);
             tess_binary_op op = e->as.binary.op;
-            
+
+            /* Integer division or modulo by a constant zero is undefined
+             * behavior in the generated C; reject it at compile time.
+             * Float division by zero is well-defined IEEE arithmetic. */
+            if ((op == TESS_BIN_DIV || op == TESS_BIN_MOD) &&
+                lhs_type == TYPE_INT &&
+                is_constant_zero_int(e->as.binary.rhs)) {
+                report(s, e->start, e->end,
+                       op == TESS_BIN_DIV ? "division by zero"
+                                          : "modulo by zero");
+                return false;
+            }
+
             /* Comparison operators: operands must be comparable types */
             if (op >= TESS_BIN_EQ && op <= TESS_BIN_GE) {
                 /* Can compare same types, or int/float */
