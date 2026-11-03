@@ -19,4 +19,4 @@ typedef struct {
     bool quiet;       /* -q/--quiet: suppress progress messages          */
 } cmd_data;
 
-cmd_data parse_cmd(int *argc, char* argv[]);
+cmd_data parse_cmd(int argc, char* argv[]);

@@ -12,29 +12,8 @@
 #include "sema/sema.h"
 #include "constants.h"
 
-char* generate_c99_code(const char *source, size_t len, const char *path) {
-    if (!source || len == 0) return NULL;
-
-    // For backward compatibility with the old API
-    tess_program *program = tess_parse(source, len, path);
-    if (!program) {
-        ERRLN(GEN_FAIL_MSG);
-        return NULL;
-    }
-    
-    // Run semantic analysis
-    if (!tess_sema_check(program, source, path)) {
-        tess_program_free(program);
-        ERRLN(GEN_FAIL_MSG);
-        return NULL;
-    }
-    
-    // Generate C99 code from AST
-    char* result = generate_c99_code_from_program(program, path, false);
-    tess_program_free(program);
-    
-    return result;
-}
+// Old deprecated API removed - use generate_c99_code_from_program instead
+// char* generate_c99_code(const char *source, size_t len, const char *path) { ... }
 
 char* generate_c99_code_from_program(tess_program *program, const char *path,
                                      bool quiet) {
@@ -112,7 +91,7 @@ bool engine_build_file(FILE *input_file, const char *input_path,
 
     // Note empty source files (they still produce a valid program).
     if (file_size == 0 && !opts.quiet) {
-        MSGLN("warning: empty source file");
+        MSGLN(WARNING_EMPTY_SOURCE);
     }
 
     // Parse source code into AST with semantic analysis
@@ -120,6 +99,21 @@ bool engine_build_file(FILE *input_file, const char *input_path,
     if (!program) {
         cleanup_buffer(buffer);
         return false;
+    }
+    
+    // Re-run semantic analysis for non-empty source (tesseract_parse now just creates empty program)
+    if (file_size > 0) {
+        program = tess_parse(buffer, file_size, input_path);
+        if (!program) {
+            cleanup_buffer(buffer);
+            return false;
+        }
+        
+        if (!tess_sema_check(program, buffer, input_path)) {
+            tess_program_free(program);
+            cleanup_buffer(buffer);
+            return false;
+        }
     }
 
     if (opts.check_only) {

@@ -7,7 +7,7 @@
 #include "engine/engine.h"
 
 int main(int argc, char *argv[]) {
-    cmd_data cmd_result = parse_cmd(&argc, argv);
+    cmd_data cmd_result = parse_cmd(argc, argv);
 
     switch (cmd_result.action) {
         case ERROR: {

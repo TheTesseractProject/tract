@@ -546,9 +546,29 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
             return true;
         }
 
-        case TESS_EXPR_MODULE:
-            /* @module — checked at runtime; accept any name at compile time. */
+        case TESS_EXPR_MODULE: {
+            /* @module — validate that the module name is known */
+            if (e->as.module == NULL) return true;
+            
+            /* Allow only known standard modules */
+            const char *known_modules[] = {"c", "libc", "std", "math", NULL};
+            bool found = false;
+            for (int i = 0; known_modules[i] != NULL; i++) {
+                if (strcmp(e->as.module, known_modules[i]) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            
+            if (!found) {
+                char msg[256];
+                snprintf(msg, sizeof msg, "unknown module `%s`", e->as.module);
+                report(s, e->start, e->end, msg);
+                return false;
+            }
+            
             return true;
+        }
 
         case TESS_EXPR_MEMBER: {
             tess_expr *obj = e->as.member.object;

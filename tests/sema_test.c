@@ -112,7 +112,7 @@ static void test_builtins(void) {
 }
 
 static void test_module(void) {
-    check(sema_ok("w = @gtk.new_window;\n"), "@module expr passes sema");
+    check(sema_ok("w = @math.sqrt;\n"), "@module expr passes sema");
 }
 
 /* ---- error cases ---- */

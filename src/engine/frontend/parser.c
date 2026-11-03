@@ -883,7 +883,7 @@ static tess_stmt *parse_class(tess_parser *p) {
     tess_token name_tok = p->cur;
     advance(p);
     
-    // Первый LBRACE - начало класса
+    // First LBRACE - beginning of class
     if (!expect(p, TESS_TOK_LBRACE, "`{` after a class name")) {
         return NULL;
     }
@@ -892,7 +892,7 @@ static tess_stmt *parse_class(tess_parser *p) {
     tess_vec fields = {0};
     tess_vec methods = {0};
     
-    // Парсим поля и методы класса
+    // Parse class fields and methods
     while (!p->failed && p->cur.kind != TESS_TOK_RBRACE &&
            p->cur.kind != TESS_TOK_EOF) {
         if (p->cur.kind == TESS_TOK_SEMI) {
@@ -905,15 +905,15 @@ static tess_stmt *parse_class(tess_parser *p) {
             return NULL;
         }
         
-        // Проверяем следующий токен
+        // Check next token
         if (p->next.kind == TESS_TOK_COLON) {
-            // Это поле
+            // This is a field
             if (!parse_field(p, &fields)) {
                 return NULL;
             }
         } else if (p->next.kind == TESS_TOK_LPAREN ||
                    p->next.kind == TESS_TOK_LBRACE) {
-            // Это метод
+            // This is a method
             if (!parse_method(p, &methods)) {
                 return NULL;
             }

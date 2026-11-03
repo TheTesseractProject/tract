@@ -7,9 +7,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_library(core STATIC
     src/core_alloc.c
     src/core_crc.c
+    src/core_diagnostics.c
     src/core_float.c
     src/core_json.c
-    src/core_diagnostics.c
     src/core_value.c
 )
 target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

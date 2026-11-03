@@ -43,7 +43,7 @@ static bool set_output(cmd_data *data, char *output) {
     return true;
 }
 
-cmd_data parse_cmd(int *argc, char* argv[]) {
+cmd_data parse_cmd(int argc, char* argv[]) {
     cmd_data data;
     data.action = HELP;
     data.path = NULL;
@@ -52,13 +52,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
     data.to_stdout = false;
     data.quiet = false;
 
-    if (argc == NULL || argv == NULL) {
-        ERRLN(TERRA_ARGS_ERROR);
-        set_error(&data);
-        return data;
-    }
-
-    if (*argc <= 1) {
+    if (argc <= 1) {
         data.action = HELP;
         return data;
     }
@@ -68,7 +62,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
     bool want_animation = false;
     bool end_of_options = false;
 
-    for (int i = 1; i < *argc; i++) {
+    for (int i = 1; i < argc; i++) {
         char *arg = argv[i];
         if (arg == NULL) {
             ERRLN(TERRA_ARGS_ERROR);
@@ -110,7 +104,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
             }
             if (strcmp(arg, "-b") == 0 || strcmp(arg, "--build") == 0) {
                 char *value = NULL;
-                if (!take_value(&i, *argc, argv,
+                if (!take_value(&i, argc, argv,
                                 ERR_BUILD_FILE_NOT_SPECIFIED, &value)) {
                     set_error(&data);
                     return data;
@@ -135,7 +129,7 @@ cmd_data parse_cmd(int *argc, char* argv[]) {
             }
             if (strcmp(arg, "-o") == 0 || strcmp(arg, "--output") == 0) {
                 char *value = NULL;
-                if (!take_value(&i, *argc, argv,
+                if (!take_value(&i, argc, argv,
                                 ERR_OUTPUT_FILE_NOT_SPECIFIED, &value)) {
                     set_error(&data);
                     return data;

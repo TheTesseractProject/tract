@@ -87,6 +87,7 @@
 #define GEN_FAIL_MSG COLOR_RED "Failed to generate C99 code" COLOR_RESET
 #define GENERATION_DONE_MSG COLOR_GREEN "Generation completed in %.3fs" COLOR_RESET
 #define OUTPUT_SAVED_MSG "C99 output saved to '" COLOR_BRIGHT_WHITE "%s" COLOR_RESET "'"
+#define WARNING_EMPTY_SOURCE WARNING_MSG "Empty source file '%s'" COLOR_RESET
 
 #define HELP_TEXT "\n"\
 \
