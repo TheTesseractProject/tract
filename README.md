@@ -53,6 +53,20 @@ Hello there!
 - Top-level `link "library";` adds a native linker dependency when using
   `--compile` (for example, `link "sqlite3";` becomes `-lsqlite3`).
 - Built-ins: `put`, `print`, `len`, `str`, `int`, `float`, `assert`, `input`.
+- Builtin string methods (Python-flavoured standard library): `len`, `at`
+  (bounds-checked), `find`, `count`, `is_empty`, `contains`, `starts_with`,
+  `ends_with`, `upper`, `lower`, `trim`, `replace`, `reverse`, `repeat` and
+  `substr`. Methods chain naturally: `s.trim().upper()`. Methods that build a
+  new string (`upper`, `replace`, ...) allocate; `at` panics on an
+  out-of-range index.
+- The native `math` module wraps C99 `<math.h>`: `@math.sqrt`, `@math.pow`,
+  `@math.floor`, `@math.ceil`, `@math.round`, `@math.abs`, `@math.min`,
+  `@math.max`, `@math.exp`, `@math.log`. Unknown members are compile-time
+  errors, not link errors.
+- `--safe` runtime checking: with the flag, integer `+ - * / %` overflow and
+  division by zero panic with a `runtime error:` message, and array/slice
+  indexing is bounds-checked. Float math and pointer arithmetic stay
+  unchecked.
 - Native interop: `import "stdio.h"; extern fn printf(format: str, ...): i32;`
   followed by ordinary `printf(...)` calls. Existing `@c.printf(...)` and
   `@math.sqrt(...)` calls remain available.
@@ -221,6 +235,7 @@ supported platforms.
 | | `--stdout` | Write generated C to standard output |
 | | `--compile` | Compile generated C into an executable |
 | | `--cc <path>` | Select compiler for `--compile` |
+| | `--safe` | Runtime-check arithmetic and indexing (panic instead of UB) |
 | `-q` | `--quiet` | Suppress progress messages |
 | | `--` | Treat all following arguments as paths |
 

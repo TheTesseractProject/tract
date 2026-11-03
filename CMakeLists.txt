@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(terra VERSION 0.4.0 LANGUAGES C)
+project(terra VERSION 0.5.0 LANGUAGES C)
 
 # Set C standard
 set(CMAKE_C_STANDARD 23)

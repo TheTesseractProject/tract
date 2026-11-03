@@ -56,13 +56,35 @@ Rules of the queue:
 | **0.0.2** | Error diagnostics with location info, test suite foundation | 🟢 Released |
 | **0.1** | AST optimization passes, initial C99 codegen | 🟢 Released |
 | **0.3.0** | C99 code generation, modular backend architecture, language syntax updates | ✅ Complete |
-| **0.4.0 (Current)** | Native C headers, clearer declarations, application-oriented control flow and executable builds | 🏗️ In Progress |
+| **0.4.0** | Native C headers, clearer declarations, application-oriented control flow and executable builds | ✅ Complete |
+| **0.5.0 (Current)** | Standard library: Python-style string methods, validated math module, `--safe` runtime checking | 🏗️ In Progress |
 
 ---
 
 ## 📅 Development Phases (0.4 → 1.0)
 
 Each phase builds upon the previous one while maintaining API/ABI stability.
+
+### Standard library and safe runtime (active direction, 0.5)
+
+- [x] Builtin string methods on string receivers, validated in sema and
+  dispatched to selective `terra_str_*` runtime helpers: `len at find count
+  is_empty contains starts_with ends_with upper lower trim replace reverse
+  repeat substr`, including method chaining (`s.trim().upper()`).
+- [x] Validated native `math` module surface (sqrt, pow, floor, ceil, round,
+  fabs/abs, fmin/fmax, exp, log) with compile-time rejection of unknown
+  members instead of link errors.
+- [x] `--safe` mode: runtime-checked integer arithmetic (overflow, division
+  by zero) and bounds-checked array/slice indexing via `terra_panic`; always
+  on for `str.at()`.
+- [x] Length-aware `put_len` for string literals, preserving embedded NULs.
+- [x] Constant division/modulo-by-zero rejected at compile time.
+- [ ] Typed dynamic collections (`terra_list` with element types, push/pop/
+  get/set/insert/remove/find/sort) built on the existing slice machinery.
+- [ ] String formatting (`format`, `join`, `split`) and number parsing with
+  error reporting instead of silent zeros.
+- [ ] Safe-mode coverage for more expression forms (compound assignment,
+  method call arguments) and a benchmark comparing safe vs. unchecked code.
 
 ### Native C and application support (active direction)
 
