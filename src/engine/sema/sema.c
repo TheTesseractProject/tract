@@ -84,6 +84,22 @@ static const str_method_entry *str_method_lookup(const char *name) {
     return NULL;
 }
 
+/* Functions exposed by the native `math` module (C99 <math.h> wrappers).
+ * Members outside this set are rejected so a typo fails at compile time
+ * instead of producing a link error in the generated C. */
+static const char *math_functions[] = {
+    "sqrt", "pow", "floor", "ceil", "round", "fabs", "abs",
+    "min", "max", "exp", "log", NULL
+};
+
+static bool is_math_function(const char *name) {
+    if (name == NULL) return false;
+    for (size_t i = 0; math_functions[i] != NULL; i++) {
+        if (strcmp(math_functions[i], name) == 0) return true;
+    }
+    return false;
+}
+
 typedef struct tess_scope {
     struct tess_scope *parent;
     bool in_method;           /* true -> return is allowed           */
@@ -1314,6 +1330,17 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                 callee->as.member.object->kind == TESS_EXPR_MODULE;
             if (module_call) {
                 if (!check_expr(s, callee)) return false;
+                /* Native math module: only known functions are callable. */
+                const char *mtarget = module_table_find(
+                    &s->modules, callee->as.member.object->as.module);
+                if (mtarget != NULL && strcmp(mtarget, "math") == 0 &&
+                    !is_math_function(callee->as.member.name)) {
+                    char msg[256];
+                    snprintf(msg, sizeof msg, "math has no function `%s`",
+                             callee->as.member.name);
+                    report(s, callee->start, callee->end, msg);
+                    return false;
+                }
             }
 
             /* Method calls: validate arity and argument types when the

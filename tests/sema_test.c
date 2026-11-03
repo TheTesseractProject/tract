@@ -167,6 +167,13 @@ static void test_string_methods(void) {
           "non-str needle on str.find is rejected");
 }
 
+static void test_math_module(void) {
+    check(sema_ok("put(@math.sqrt(4.0));\n"), "math.sqrt passes");
+    check(sema_ok("put(@math.min(1.0, 2.0));\n"), "math.min passes");
+    check(sema_err("put(@math.sqr(4.0));\n"),
+          "unknown math function is rejected");
+}
+
 static void test_duplicate_class(void) {
     check(sema_err("A { x: int; }\nA { y: str; }\n"),
           "duplicate class name is rejected");
@@ -279,6 +286,7 @@ int main(void) {
     test_return_outside_method();
     test_constant_divmod_zero();
     test_string_methods();
+    test_math_module();
     test_duplicate_class();
     test_unknown_member();
     test_duplicate_field();

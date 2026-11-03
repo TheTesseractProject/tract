@@ -52,6 +52,8 @@ typedef struct {
     bool ret_str;
 } c99_str_method;
 
+static const char *module_resolve(c99_codegen *gen, const char *alias);
+
 static const c99_str_method c99_str_methods[] = {
     {"len",         "terra_len",           RT_LEN,           false},
     {"at",          "terra_str_at",        RT_STR_AT,        false},
@@ -79,6 +81,27 @@ static const c99_str_method *c99_str_method_lookup(const char *name) {
         }
     }
     return NULL;
+}
+
+/* C99 <math.h> surface exposed through the `math` module. `min`/`max`/`abs`
+ * have no direct C names for doubles, so they map to fmin/fmax/fabs. */
+static bool c99_is_math_function(const char *name) {
+    if (name == NULL) return false;
+    static const char *const fns[] = {
+        "sqrt", "pow", "floor", "ceil", "round", "fabs", "abs",
+        "min", "max", "exp", "log", NULL
+    };
+    for (size_t i = 0; fns[i] != NULL; i++) {
+        if (strcmp(fns[i], name) == 0) return true;
+    }
+    return false;
+}
+
+static const char *c99_math_c_name(const char *name) {
+    if (strcmp(name, "abs") == 0) return "fabs";
+    if (strcmp(name, "min") == 0) return "fmin";
+    if (strcmp(name, "max") == 0) return "fmax";
+    return name;
 }
 
 /**
@@ -886,6 +909,23 @@ static bool expr_is_float_like(c99_codegen *gen, tess_expr *e) {
                 }
             } else if (e->as.call.callee &&
                        e->as.call.callee->kind == TESS_EXPR_MEMBER) {
+                /* math.* functions all return double. */
+                tess_expr *obj = e->as.call.callee->as.member.object;
+                if (obj != NULL && (obj->kind == TESS_EXPR_MODULE ||
+                                    obj->kind == TESS_EXPR_IDENT)) {
+                    const char *mt = obj->kind == TESS_EXPR_MODULE
+                        ? module_resolve(gen, obj->as.module)
+                        : module_resolve(gen, obj->as.ident);
+                    /* Native module names pass through when no user alias
+                     * was registered for them (@math without an import). */
+                    if (mt == NULL && obj->kind == TESS_EXPR_MODULE) {
+                        mt = obj->as.module;
+                    }
+                    if (mt != NULL && strcmp(mt, "math") == 0 &&
+                        c99_is_math_function(e->as.call.callee->as.member.name)) {
+                        return true;
+                    }
+                }
                 const char *ret = method_ret_type_name(
                     gen, e->as.call.callee->as.member.object,
                     e->as.call.callee->as.member.name);
@@ -1424,7 +1464,15 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                             gen->failed = true;
                             break;
                         }
-                        snprintf(fn, sizeof fn, "%s", mem);
+                        if (strcmp(mod, "math") == 0) {
+                            if (!c99_is_math_function(mem)) {
+                                gen->failed = true;
+                                break;
+                            }
+                            snprintf(fn, sizeof fn, "%s", c99_math_c_name(mem));
+                        } else {
+                            snprintf(fn, sizeof fn, "%s", mem);
+                        }
                     } else {
                         const char *target = module_resolve(gen, mod);
                         if (!target) { gen->failed = true; break; }
@@ -1446,7 +1494,16 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                     if (target != NULL) {
                         if (strcmp(target, "c") == 0 || strcmp(target, "libc") == 0 ||
                             strcmp(target, "std") == 0 || strcmp(target, "math") == 0) {
-                            append_str(gen, method);
+                            if (strcmp(target, "math") == 0) {
+                                if (!c99_is_math_function(method)) {
+                                    gen->failed = true;
+                                    append_str(gen, "/* UNKNOWN_MATH_FN */");
+                                    break;
+                                }
+                                append_str(gen, c99_math_c_name(method));
+                            } else {
+                                append_str(gen, method);
+                            }
                         } else {
                             append_ident(gen, target);
                             append_str(gen, "_");
