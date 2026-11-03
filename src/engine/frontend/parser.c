@@ -36,6 +36,8 @@ typedef struct {
 
 static tess_stmt *parse_statement(tess_parser *p);
 static tess_stmt *parse_statement_impl(tess_parser *p);
+static tess_stmt *parse_import(tess_parser *p);
+static tess_stmt *parse_fn(tess_parser *p);
 
 static bool fail_at(tess_parser *p, const char *message, size_t start,
                     size_t end) {
@@ -301,6 +303,11 @@ static tess_expr **parse_args(tess_parser *p, size_t *out_count,
             }
             if (p->cur.kind == TESS_TOK_COMMA) {
                 advance(p);
+                if (p->cur.kind == TESS_TOK_RPAREN) {
+                    fail_at(p, "expected a parameter after `,`",
+                            p->cur.start, p->cur.end);
+                    return NULL;
+                }
                 continue;
             }
             break;
@@ -628,9 +635,7 @@ static tess_expr *parse_expr(tess_parser *p) {
 
 static tess_stmt *parse_block_body(tess_parser *p) {
     uint32_t start = (uint32_t)p->cur.start;
-    if (!expect(p, TESS_TOK_LBRACE, "`{` to open a block")) {
-        return NULL;
-    }
+    if (!expect(p, TESS_TOK_LBRACE, "`{` to open a block")) return NULL;
     tess_vec items = {0};
     while (!p->failed && p->cur.kind != TESS_TOK_RBRACE &&
            p->cur.kind != TESS_TOK_EOF) {
@@ -955,6 +960,162 @@ static tess_stmt *parse_class(tess_parser *p) {
     return stmt;
 }
 
+static bool ident_is_word(tess_parser *p, const char *word) {
+    size_t n = strlen(word);
+    return p->cur.kind == TESS_TOK_IDENT &&
+           (size_t)(p->cur.end - p->cur.start) == n &&
+           memcmp(p->src + p->cur.start, word, n) == 0;
+}
+
+static tess_stmt *parse_import(tess_parser *p) {
+    uint32_t start = (uint32_t)p->cur.start;
+    uint32_t end = (uint32_t)p->cur.end;
+    advance(p); /* `import` */
+
+    tess_stmt *stmt = new_stmt(p, TESS_STMT_IMPORT, start, end);
+    if (stmt == NULL) return NULL;
+    stmt->as.import.module = NULL;
+    stmt->as.import.path = NULL;
+    stmt->as.import.alias = NULL;
+
+    if (p->cur.kind == TESS_TOK_IDENT) {
+        char *name = copy_ident(p, p->cur);
+        if (name == NULL) return NULL;
+        stmt->as.import.module = name;
+        stmt->as.import.alias = name;
+        advance(p);
+    } else if (p->cur.kind == TESS_TOK_STRING) {
+        size_t len = 0;
+        char *path = unescape_string(p, p->cur, &len);
+        if (path == NULL) return NULL;
+        size_t n = len;
+        while (n > 0 && (path[n - 1] == '.' || path[n - 1] == '/')) {
+            n--;
+        }
+        size_t slash = 0;
+        for (size_t i = 0; i < n; i++) {
+            if (path[i] == '/') slash = i;
+        }
+        size_t base = slash < n ? slash + 1 : 0;
+        size_t blen = n - base;
+        char *alias = tess_arena_alloc(&p->program->arena, blen + 1);
+        if (alias == NULL) return NULL;
+        memcpy(alias, path + base, blen);
+        alias[blen] = '\0';
+        stmt->as.import.path = path;
+        stmt->as.import.alias = alias;
+        advance(p);
+    } else {
+        fail_at(p, "expected module name or string path after `import`",
+                p->cur.start, p->cur.end);
+        return NULL;
+    }
+
+    if (ident_is_word(p, "as")) {
+        advance(p);
+        if (p->cur.kind != TESS_TOK_IDENT) {
+            fail_at(p, "expected an alias after `as`", p->cur.start, p->cur.end);
+            return NULL;
+        }
+        char *alias = copy_ident(p, p->cur);
+        if (alias == NULL) return NULL;
+        stmt->as.import.alias = alias;
+        advance(p);
+    }
+
+    if (p->cur.kind == TESS_TOK_SEMI) advance(p);
+    else if (p->cur.kind != TESS_TOK_EOF &&
+             p->cur.kind != TESS_TOK_RBRACE) {
+        fail_at(p, "expected `;` after import", p->cur.start, p->cur.end);
+        return NULL;
+    }
+
+    return stmt;
+}
+
+static tess_stmt *parse_fn(tess_parser *p) {
+    uint32_t start = (uint32_t)p->cur.start;
+    uint32_t end = (uint32_t)p->cur.end;
+    advance(p); /* `fn` */
+
+    /* Function position in the source is its keyword, with the full span
+     * recorded after the body is parsed below. */
+
+    if (p->cur.kind != TESS_TOK_IDENT) {
+        fail_at(p, "expected a function name after `fn`", p->cur.start, p->cur.end);
+        return NULL;
+    }
+    tess_token name_tok = p->cur;
+    char *name = copy_ident(p, name_tok);
+    if (name == NULL) return NULL;
+    advance(p);
+
+    if (!expect(p, TESS_TOK_LPAREN, "`(` after the function name")) return NULL;
+
+    tess_vec params = {0};
+    if (p->cur.kind != TESS_TOK_RPAREN) {
+        for (;;) {
+            if (p->cur.kind != TESS_TOK_IDENT) {
+                fail_at(p, "expected a parameter name", p->cur.start, p->cur.end);
+                return NULL;
+            }
+            tess_token param_name = p->cur;
+            advance(p);
+            if (!expect(p, TESS_TOK_COLON, "`:` after a parameter name")) return NULL;
+            if (p->cur.kind != TESS_TOK_IDENT) {
+                fail_at(p, "expected a parameter type", p->cur.start, p->cur.end);
+                return NULL;
+            }
+            tess_token param_type = p->cur;
+            advance(p);
+            tess_param param = {0};
+            param.name = copy_ident(p, param_name);
+            if (param.name == NULL) return NULL;
+            param.type = copy_ident(p, param_type);
+            if (param.type == NULL) return NULL;
+            if (!vec_push(p, &params, sizeof param, &param)) return NULL;
+            if (p->cur.kind == TESS_TOK_COMMA) {
+                advance(p);
+                if (p->cur.kind == TESS_TOK_RPAREN) {
+                    fail_at(p, "expected a parameter after `,`",
+                            p->cur.start, p->cur.end);
+                    return NULL;
+                }
+                continue;
+            }
+            break;
+        }
+    }
+    if (!expect(p, TESS_TOK_RPAREN, "`)` after the parameters")) return NULL;
+
+    char *ret_type = NULL;
+    if (p->cur.kind == TESS_TOK_COLON) {
+        advance(p);
+        if (p->cur.kind != TESS_TOK_IDENT) {
+            fail_at(p, "expected a return type after `:`", p->cur.start, p->cur.end);
+            return NULL;
+        }
+        ret_type = copy_ident(p, p->cur);
+        if (ret_type == NULL) return NULL;
+        advance(p);
+    }
+
+    /* This grammar currently defines imports/functions at file scope only. */
+
+    tess_stmt *body = parse_block_body(p);
+    if (body == NULL) return NULL;
+    end = body->end;
+
+    tess_stmt *stmt = new_stmt(p, TESS_STMT_FN, start, end);
+    if (stmt == NULL) return NULL;
+    stmt->as.fn.params = params.items;
+    stmt->as.fn.param_count = params.count;
+    stmt->as.fn.name = name;
+    stmt->as.fn.ret_type = ret_type;
+    stmt->as.fn.fn_body = body;
+    return stmt;
+}
+
 static void report_error(const char *src, const char *path, uint32_t start,
                          uint32_t end, const char *message) {
     const char *name = path != NULL ? path : "<input>";
@@ -988,6 +1149,10 @@ tess_program *tess_parse(const char *src, size_t len, const char *path) {
     }
     memset(program, 0, sizeof *program);
 
+    if (len > UINT32_MAX || len == SIZE_MAX) {
+        core_free(program);
+        return NULL;
+    }
     char *source = core_alloc(len + 1);
     if (source == NULL) {
         core_free(program);
@@ -1013,9 +1178,16 @@ tess_program *tess_parse(const char *src, size_t len, const char *path) {
 
     tess_vec items = {0};
     while (!p.failed && p.cur.kind != TESS_TOK_EOF) {
-        bool is_class = p.cur.kind == TESS_TOK_IDENT &&
-                        p.next.kind == TESS_TOK_LBRACE;
-        tess_stmt *stmt = is_class ? parse_class(&p) : parse_statement(&p);
+        tess_stmt *stmt = NULL;
+        if (p.cur.kind == TESS_TOK_KW_IMPORT) {
+            stmt = parse_import(&p);
+        } else if (p.cur.kind == TESS_TOK_KW_FN) {
+            stmt = parse_fn(&p);
+        } else {
+            bool is_class = p.cur.kind == TESS_TOK_IDENT &&
+                            p.next.kind == TESS_TOK_LBRACE;
+            stmt = is_class ? parse_class(&p) : parse_statement(&p);
+        }
         if (stmt == NULL) {
             break;
         }

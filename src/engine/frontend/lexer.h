@@ -44,7 +44,9 @@ typedef enum {
     TESS_TOK_KW_RETURN,
     TESS_TOK_KW_TRUE,
     TESS_TOK_KW_FALSE,
-    TESS_TOK_KW_NULL
+    TESS_TOK_KW_NULL,
+    TESS_TOK_KW_IMPORT,
+    TESS_TOK_KW_FN
 } tess_token_kind;
 
 typedef struct {

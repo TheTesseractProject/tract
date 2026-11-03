@@ -16,6 +16,7 @@ struct tess_arena_block {
 
 static size_t align_up(size_t bytes) {
     size_t alignment = alignof(max_align_t);
+    if (bytes > SIZE_MAX - (alignment - 1)) return 0;
     return (bytes + alignment - 1) & ~(alignment - 1);
 }
 
@@ -27,6 +28,7 @@ void *tess_arena_alloc(tess_arena *arena, size_t bytes) {
         bytes = 1;
     }
     bytes = align_up(bytes);
+    if (bytes == 0) return NULL;
 
     tess_arena_block *block = arena->head;
     if (block == NULL || block->cap - block->used < bytes) {

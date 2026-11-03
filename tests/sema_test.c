@@ -215,6 +215,17 @@ static void test_duplicate_parameter(void) {
           "duplicate parameter is rejected");
 }
 
+static void test_function_semantics(void) {
+    check(sema_ok("fn add(a: int, b: int): int { return a + b; }\n"
+                  "x = add(2, 3);\n"),
+          "declared function call passes");
+    check(sema_err("fn add(a: int): int { return a; }\n"
+                   "x = add();\n"),
+          "function arity mismatch is rejected");
+    check(sema_err("if (true) { scoped = 1; }\nput(scoped);\n"),
+          "branch-local variable does not escape its scope");
+}
+
 static void test_duplicate_field(void) {
     check(sema_err("Box { x: int; x: str; }\n"),
           "duplicate field is rejected");
@@ -242,6 +253,7 @@ int main(void) {
     test_field_assignment_types();
     test_method_signatures();
     test_duplicate_parameter();
+    test_function_semantics();
 
     if (failures != 0) {
         fprintf(stderr, "%d sema test(s) failed\n", failures);

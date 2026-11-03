@@ -11,11 +11,17 @@
  */
 static bool ensure_capacity(c99_codegen *gen, size_t extra) {
     if (!gen || extra == 0) return true;
-    
-    if (gen->size + extra + 1 > gen->capacity) {
-        size_t needed = gen->size + extra + 1;
+    if (extra > SIZE_MAX - gen->size - 1) return false;
+    size_t needed = gen->size + extra + 1;
+    if (needed > gen->capacity) {
         size_t new_capacity = gen->capacity ? gen->capacity : 64;
-        while (new_capacity < needed) new_capacity *= 2;
+        while (new_capacity < needed) {
+            if (new_capacity > SIZE_MAX / 2) {
+                new_capacity = needed;
+                break;
+            }
+            new_capacity *= 2;
+        }
         char *nb = realloc(gen->buffer, new_capacity);
         if (!nb) return false;
         gen->buffer = nb;
@@ -28,10 +34,10 @@ static bool ensure_capacity(c99_codegen *gen, size_t extra) {
  * @brief Internal helper: append string to buffer
  */
 static bool append_str(c99_codegen *gen, const char *str) {
-    if (!gen || !str) return false;
+    if (!gen || !str) { if (gen) gen->failed = true; return false; }
     
     size_t len = strlen(str);
-    if (!ensure_capacity(gen, len)) return false;
+    if (!ensure_capacity(gen, len)) { gen->failed = true; return false; }
     
     memcpy(gen->buffer + gen->size, str, len);
     gen->size += len;
@@ -57,6 +63,7 @@ static bool append_fprintf(c99_codegen *gen, const char *format, ...) {
     
     size_t needed = (size_t)written + 1;
     if (!ensure_capacity(gen, needed)) {
+        gen->failed = true;
         return false;
     }
     
@@ -64,7 +71,7 @@ static bool append_fprintf(c99_codegen *gen, const char *format, ...) {
     int actual_written = vsnprintf(gen->buffer + gen->size, gen->capacity - gen->size, format, args);
     va_end(args);
     
-    if (actual_written < 0) return false;
+    if (actual_written < 0) { gen->failed = true; return false; }
     gen->size += (size_t)actual_written;
     return true;
 }
@@ -76,6 +83,10 @@ static bool append_fprintf(c99_codegen *gen, const char *format, ...) {
  * byte that is not safely printable ASCII. */
 static void append_c_string_literal(c99_codegen *gen, const char *data,
                                     size_t len) {
+    if (data == NULL && len != 0) {
+        gen->failed = true;
+        return;
+    }
     append_str(gen, "\"");
     for (size_t i = 0; i < len; i++) {
         unsigned char c = (unsigned char)data[i];
@@ -86,7 +97,9 @@ static void append_c_string_literal(c99_codegen *gen, const char *data,
             case '\t': append_str(gen, "\\t"); break;
             case '\r': append_str(gen, "\\r"); break;
             default:
-                if (c < 0x20 || c >= 0x7f) {
+                if (c == 0) {
+                    append_str(gen, "\\000");
+                } else if (c < 0x20 || c >= 0x7f) {
                     char buf[8];
                     snprintf(buf, sizeof buf, "\\%03o", c);
                     append_str(gen, buf);
@@ -124,7 +137,7 @@ static void mark_declared_var(c99_codegen *gen, const char *name) {
     if (gen->declared_count == gen->declared_cap) {
         size_t cap = gen->declared_cap == 0 ? 8 : gen->declared_cap * 2;
         char **arr = realloc(gen->declared, cap * sizeof(char*));
-        if (!arr) return;
+        if (!arr) { gen->failed = true; return; }
         gen->declared = arr;
         gen->declared_cap = cap;
     }
@@ -139,6 +152,60 @@ static const char* get_var_class(c99_codegen *gen, const char *name) {
     return NULL;
 }
 
+static bool expr_is_string_like(c99_codegen *gen, tess_expr *e);
+static bool expr_is_float_like(c99_codegen *gen, tess_expr *e);
+static bool is_class_name(c99_codegen *gen, const char *name);
+static tess_field *find_field(tess_class *cls, const char *name);
+static tess_class *find_class(c99_codegen *gen, const char *name);
+static const char *expr_class(c99_codegen *gen, tess_expr *e);
+static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
+    if (!expr) return "int";
+    switch (expr->kind) {
+        case TESS_EXPR_FLOAT: return "double";
+        case TESS_EXPR_STRING: return "const char*";
+        case TESS_EXPR_BOOL: return "bool";
+        case TESS_EXPR_NULL: return "void*";
+        case TESS_EXPR_IDENT: {
+            const char *cls = get_var_class(gen, expr->as.ident);
+            if (cls && is_class_name(gen, cls)) return cls;
+            if (cls && (strcmp(cls, "str") == 0 || strcmp(cls, "string") == 0))
+                return "const char*";
+            if (cls && (strcmp(cls, "float") == 0 || strcmp(cls, "f64") == 0))
+                return "double";
+            if (gen->current_class != NULL) {
+                tess_field *field = find_field(
+                    find_class(gen, gen->current_class), expr->as.ident);
+                if (field != NULL) {
+                    if (strcmp(field->type, "str") == 0 ||
+                        strcmp(field->type, "string") == 0) return "const char*";
+                    if (strcmp(field->type, "float") == 0 ||
+                        strcmp(field->type, "f64") == 0) return "double";
+                    if (is_class_name(gen, field->type)) return "void*";
+                }
+            }
+            return "long long";
+        }
+        case TESS_EXPR_CALL:
+            if (expr->as.call.callee &&
+                expr->as.call.callee->kind == TESS_EXPR_IDENT) {
+                const char *name = expr->as.call.callee->as.ident;
+                if (strcmp(name, "str") == 0 || strcmp(name, "input") == 0)
+                    return "const char*";
+                if (strcmp(name, "float") == 0) return "double";
+            }
+            return "long long";
+        case TESS_EXPR_BINARY:
+            if (expr_is_string_like(gen, expr)) return "const char*";
+            if (expr_is_float_like(gen, expr)) return "double";
+            return "long long";
+        case TESS_EXPR_UNARY:
+            return expr_type_name(gen, expr->as.unary.operand);
+        case TESS_EXPR_TERNARY:
+            return expr_type_name(gen, expr->as.ternary.then_expr);
+        default: return "long long";
+    }
+}
+
 static void record_var_class(c99_codegen *gen, const char *name, const char *cls) {
     if (!gen || !name || !cls) return;
     for (size_t i = 0; i < gen->var_count; i++) {
@@ -150,10 +217,10 @@ static void record_var_class(c99_codegen *gen, const char *name, const char *cls
     if (gen->var_count == gen->var_cap) {
         size_t cap = gen->var_cap == 0 ? 8 : gen->var_cap * 2;
         char **names = realloc(gen->var_names, cap * sizeof(char*));
-        if (!names) return;
+        if (!names) { gen->failed = true; return; }
         gen->var_names = names;
         char **classes = realloc(gen->var_classes, cap * sizeof(char*));
-        if (!classes) return; /* names grew but cap stays; next call retries */
+        if (!classes) { gen->failed = true; return; }
         gen->var_classes = classes;
         gen->var_cap = cap;
     }
@@ -240,6 +307,8 @@ static tess_class *find_class(c99_codegen *gen, const char *name);
 static const char *expr_class(c99_codegen *gen, tess_expr *e);
 static bool class_has_method(c99_codegen *gen, const char *cls,
                              const char *method);
+static void c99_codegen_generate_class_init_helpers(c99_codegen *gen,
+                                                     tess_program *program);
 
 /**
  * @brief Check if an expression is a float literal or has float type
@@ -439,6 +508,49 @@ static bool is_field_of_current_class(c99_codegen *gen, const char *name) {
     return false;
 }
 
+/* Imported module alias -> module key resolution. */
+static bool module_add(c99_codegen *gen, const char *alias, const char *target) {
+    if (!gen || !alias || !target) return true;
+    for (size_t i = 0; i < gen->module_alias_count; i++) {
+        if (strcmp(gen->module_aliases[i], alias) == 0) {
+            char *replacement = strdup(target);
+            if (!replacement) { gen->failed = true; return false; }
+            free(gen->module_targets[i]);
+            gen->module_targets[i] = replacement;
+            return true;
+        }
+    }
+    if (gen->module_alias_count == gen->module_alias_cap) {
+        size_t cap = gen->module_alias_cap == 0 ? 8 : gen->module_alias_cap * 2;
+        char **names = realloc(gen->module_aliases, cap * sizeof(char*));
+        if (!names) { gen->failed = true; return false; }
+        gen->module_aliases = names;
+        char **tgts = realloc(gen->module_targets, cap * sizeof(char*));
+        if (!tgts) { gen->failed = true; return false; }
+        gen->module_targets = tgts;
+        gen->module_alias_cap = cap;
+    }
+    char *al = strdup(alias);
+    char *tg = strdup(target);
+    if (!al || !tg) { free(al); free(tg); gen->failed = true; return false; }
+    gen->module_aliases[gen->module_alias_count] = al;
+    gen->module_targets[gen->module_alias_count] = tg;
+    gen->module_alias_count++;
+    return true;
+}
+
+static const char *module_resolve(c99_codegen *gen, const char *alias) {
+    if (!gen || !gen->module_aliases || !gen->module_targets || !alias) {
+        return NULL;
+    }
+    for (size_t i = 0; i < gen->module_alias_count; i++) {
+        if (strcmp(gen->module_aliases[i], alias) == 0) {
+            return gen->module_targets[i];
+        }
+    }
+    return NULL;
+}
+
 /**
  * @brief Generate C99 code for an expression
  */
@@ -454,6 +566,8 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             char tmp[64];
             snprintf(tmp, sizeof tmp, "%.17g", expr->as.float_value);
             append_str(gen, tmp);
+            if (!strchr(tmp, '.') && !strchr(tmp, 'e') && !strchr(tmp, 'E'))
+                append_str(gen, ".0");
             break;
         }
         case TESS_EXPR_STRING: {
@@ -478,6 +592,12 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             append_str(gen, expr->as.ident);
             break;
         }
+        case TESS_EXPR_ASSIGN: {
+            c99_codegen_expr(gen, expr->as.assign.target);
+            append_str(gen, " = ");
+            c99_codegen_expr(gen, expr->as.assign.value);
+            break;
+        }
         case TESS_EXPR_MEMBER: {
             if (!gen || !expr) return;
             const char *member = expr->as.member.name ? expr->as.member.name : "INVALID";
@@ -489,8 +609,17 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                             strcmp(mod, "std") == 0 || strcmp(mod, "math") == 0)) {
                     append_str(gen, mem);
                 } else {
-                    append_fprintf(gen, "%s_%s", mod ? mod : "mod", mem);
+                    const char *target = module_resolve(gen, mod);
+                    if (!target) { gen->failed = true; break; }
+                    append_fprintf(gen, "%s_%s", target, mem);
                 }
+                break;
+            }
+
+            if (obj_expr && obj_expr->kind == TESS_EXPR_IDENT &&
+                module_resolve(gen, obj_expr->as.ident) != NULL) {
+                append_fprintf(gen, "%s_%s",
+                    module_resolve(gen, obj_expr->as.ident), member);
                 break;
             }
 
@@ -509,9 +638,13 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             /* Method referenced without parentheses (`t.run;`) is a call. */
             const char *cls = expr_class(gen, obj_expr);
             if (cls != NULL && class_has_method(gen, cls, member)) {
+                bool static_call = obj_expr != NULL &&
+                    obj_expr->kind == TESS_EXPR_IDENT &&
+                    is_class_name(gen, obj_expr->as.ident);
                 append_fprintf(gen, "%s_%s(", cls, member);
                 if (obj_expr != NULL) {
-                    c99_codegen_expr(gen, obj_expr);
+                    if (static_call) append_str(gen, "NULL");
+                    else c99_codegen_expr(gen, obj_expr);
                 } else {
                     append_str(gen, "self");
                 }
@@ -544,15 +677,13 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                         break;
                     }
                     if (strcmp(method, "init") == 0) {
-                        append_str(gen, "({ ");
-                        append_fprintf(gen, "%s* _terra_tmp = calloc(1, sizeof(%s)); ", cls, cls);
-                        append_fprintf(gen, "%s_init(_terra_tmp", cls);
+                        append_fprintf(gen, "%s_init_new(", cls);
                         for (size_t i = 0; i < expr->as.call.arg_count; i++) {
-                            append_str(gen, ", ");
+                            if (i != 0) append_str(gen, ", ");
                             if (expr->as.call.args[i]) c99_codegen_expr(gen, expr->as.call.args[i]);
                             else append_str(gen, "NULL");
                         }
-                        append_str(gen, "); _terra_tmp; })");
+                        append_str(gen, ")");
                         break;
                     }
                 }
@@ -566,7 +697,10 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                                 strcmp(mod, "std") == 0 || strcmp(mod, "math") == 0)) {
                         snprintf(fn, sizeof fn, "%s", mem);
                     } else {
-                        snprintf(fn, sizeof fn, "%s_%s", mod ? mod : "mod", mem);
+                        const char *target = module_resolve(gen, mod);
+                        if (!target) { gen->failed = true; break; }
+                        if (snprintf(fn, sizeof fn, "%s_%s", target, mem) >=
+                            (int)sizeof fn) { gen->failed = true; break; }
                     }
                     append_str(gen, fn);
                     append_str(gen, "(");
@@ -577,6 +711,18 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                     }
                     append_str(gen, ")");
                     break;
+                }
+                if (obj_expr && obj_expr->kind == TESS_EXPR_IDENT) {
+                    const char *target = module_resolve(gen, obj_expr->as.ident);
+                    if (target != NULL) {
+                        append_fprintf(gen, "%s_%s(", target, method);
+                        for (size_t i = 0; i < expr->as.call.arg_count; i++) {
+                            if (i) append_str(gen, ", ");
+                            c99_codegen_expr(gen, expr->as.call.args[i]);
+                        }
+                        append_str(gen, ")");
+                        break;
+                    }
                 }
                 const char *cls = expr_class(gen, obj_expr);
                 if (!cls) {
@@ -728,7 +874,7 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             break;
         }
         case TESS_EXPR_MODULE: {
-            append_str(gen, "0");
+            gen->failed = true;
             break;
         }
         case TESS_EXPR_TERNARY: {
@@ -794,7 +940,16 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                     const char *name = stmt->as.assign.target->as.ident;
                     if (!is_declared_var(gen, name) &&
                         !(gen->current_class && is_field_of_current_class(gen, name))) {
-                        append_str(gen, "__auto_type ");
+                        const char *class_type = construction_class(
+                            gen, stmt->as.assign.value);
+                        if (class_type != NULL) {
+                            append_fprintf(gen, "%s* ", class_type);
+                            record_var_class(gen, name, class_type);
+                        } else {
+                            append_fprintf(gen, "%s ",
+                                           expr_type_name(gen,
+                                               stmt->as.assign.value));
+                        }
                         mark_declared_var(gen, name);
                     }
                 }
@@ -861,12 +1016,16 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
         }
         
         case TESS_STMT_IF: {
+            size_t saved_declared = gen->declared_count;
+            size_t saved_vars = gen->var_count;
             append_indent(gen);
             append_str(gen, "if (");
             c99_codegen_expr(gen, stmt->as.if_stmt.cond);
             append_str(gen, ") {\n");
             gen->indent_level++;
             c99_codegen_body(gen, stmt->as.if_stmt.then_branch);
+            gen->declared_count = saved_declared;
+            gen->var_count = saved_vars;
             gen->indent_level--;
             
             if (stmt->as.if_stmt.else_branch && 
@@ -875,6 +1034,8 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                 append_str(gen, "} else {\n");
                 gen->indent_level++;
                 c99_codegen_body(gen, stmt->as.if_stmt.else_branch);
+                gen->declared_count = saved_declared;
+                gen->var_count = saved_vars;
                 gen->indent_level--;
             }
             
@@ -884,12 +1045,16 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
         }
         
         case TESS_STMT_WHILE: {
+            size_t saved_declared = gen->declared_count;
+            size_t saved_vars = gen->var_count;
             append_indent(gen);
             append_str(gen, "while (");
             c99_codegen_expr(gen, stmt->as.while_stmt.cond);
             append_str(gen, ") {\n");
             gen->indent_level++;
             c99_codegen_body(gen, stmt->as.while_stmt.body);
+            gen->declared_count = saved_declared;
+            gen->var_count = saved_vars;
             gen->indent_level--;
             append_indent(gen);
             append_str(gen, "}\n");
@@ -915,15 +1080,25 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
              * statement, which already printed the opening `{`. */
             append_indent(gen);
             append_str(gen, "{\n");
+            size_t saved_declared = gen->declared_count;
+            size_t saved_vars = gen->var_count;
             gen->indent_level++;
             for (size_t i = 0; i < stmt->as.block.count; i++) {
                 c99_codegen_stmt(gen, stmt->as.block.items[i]);
             }
+            gen->declared_count = saved_declared;
+            gen->var_count = saved_vars;
             gen->indent_level--;
             append_indent(gen);
             append_str(gen, "}\n");
             break;
         }
+        case TESS_STMT_IMPORT:
+            /* Imports are compile-time declarations. */
+            break;
+        case TESS_STMT_FN:
+            /* Emitted by the top-level function pass. */
+            break;
     }
 }
 /**
@@ -1013,6 +1188,121 @@ static void c99_codegen_generate_method(c99_codegen *gen, tess_class *cls, tess_
     reset_function_state(gen);
 }
 
+static void c99_codegen_generate_function(c99_codegen *gen, tess_stmt *stmt) {
+    if (!gen || !stmt || stmt->kind != TESS_STMT_FN) return;
+    reset_function_state(gen);
+    gen->current_class = NULL;
+    tess_stmt *fn = stmt;
+    const char *name = fn->as.fn.name;
+    if (!name) { gen->failed = true; return; }
+    bool returns_void = fn->as.fn.ret_type == NULL ||
+                        strcmp(fn->as.fn.ret_type, "null") == 0;
+    append_fprintf(gen, "static %s %s(",
+                   returns_void ? "void" : tess_type_to_c(fn->as.fn.ret_type),
+                   name);
+    if (fn->as.fn.param_count == 0) append_str(gen, "void");
+    for (size_t i = 0; i < fn->as.fn.param_count; i++) {
+        if (i) append_str(gen, ", ");
+        append_declarator(gen, fn->as.fn.params[i].type,
+                          fn->as.fn.params[i].name);
+        mark_declared_var(gen, fn->as.fn.params[i].name);
+        if (fn->as.fn.params[i].type &&
+            (strcmp(fn->as.fn.params[i].type, "str") == 0 ||
+             strcmp(fn->as.fn.params[i].type, "string") == 0))
+            record_var_class(gen, fn->as.fn.params[i].name, "str");
+        if (fn->as.fn.params[i].type &&
+            (strcmp(fn->as.fn.params[i].type, "float") == 0 ||
+             strcmp(fn->as.fn.params[i].type, "f64") == 0))
+            record_var_class(gen, fn->as.fn.params[i].name, "float");
+    }
+    append_str(gen, ") {\n");
+    gen->indent_level++;
+    c99_codegen_body(gen, fn->as.fn.fn_body);
+    if (returns_void) {
+        append_indent(gen);
+        append_str(gen, "return;\n");
+    }
+    gen->indent_level--;
+    append_str(gen, "}\n\n");
+    reset_function_state(gen);
+}
+
+static void c99_codegen_generate_functions(c99_codegen *gen,
+                                            tess_program *program) {
+    /* Prototypes make forward calls safe. */
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *stmt = program->items[i];
+        if (!stmt || stmt->kind != TESS_STMT_FN) continue;
+        bool returns_void = stmt->as.fn.ret_type == NULL ||
+            strcmp(stmt->as.fn.ret_type, "null") == 0;
+        append_fprintf(gen, "static %s %s(",
+                       returns_void ? "void" :
+                       tess_type_to_c(stmt->as.fn.ret_type),
+                       stmt->as.fn.name);
+        if (stmt->as.fn.param_count == 0) append_str(gen, "void");
+        for (size_t j = 0; j < stmt->as.fn.param_count; j++) {
+            if (j) append_str(gen, ", ");
+            append_declarator(gen, stmt->as.fn.params[j].type,
+                              stmt->as.fn.params[j].name);
+        }
+        append_str(gen, ");\n");
+    }
+    append_str(gen, "\n");
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *stmt = program->items[i];
+        if (stmt && stmt->kind == TESS_STMT_FN)
+            c99_codegen_generate_function(gen, stmt);
+    }
+}
+
+static void c99_codegen_generate_class_init_helpers(c99_codegen *gen,
+                                                     tess_program *program) {
+    /* Forward declarations for all generated method bodies. */
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *stmt = program->items[i];
+        if (!stmt || stmt->kind != TESS_STMT_CLASS) continue;
+        tess_class *cls = stmt->as.class_decl;
+        for (size_t j = 0; j < cls->method_count; j++) {
+            tess_method *method = &cls->methods[j];
+            append_fprintf(gen, "int %s_%s(%s* self", cls->name,
+                           method->name, cls->name);
+            for (size_t k = 0; k < method->param_count; k++) {
+                append_str(gen, ", ");
+                append_declarator(gen, method->params[k].type,
+                                  method->params[k].name);
+            }
+            append_str(gen, ");\n");
+        }
+    }
+    append_str(gen, "\n");
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *stmt = program->items[i];
+        if (!stmt || stmt->kind != TESS_STMT_CLASS || !stmt->as.class_decl)
+            continue;
+        tess_class *cls = stmt->as.class_decl;
+        tess_method *init = NULL;
+        for (size_t j = 0; j < cls->method_count; j++)
+            if (strcmp(cls->methods[j].name, "init") == 0) init = &cls->methods[j];
+        if (!init) continue;
+        append_fprintf(gen, "static %s* %s_init_new(", cls->name, cls->name);
+        if (init->param_count == 0) append_str(gen, "void");
+        for (size_t j = 0; j < init->param_count; j++) {
+            if (j) append_str(gen, ", ");
+            append_declarator(gen, init->params[j].type, init->params[j].name);
+        }
+        append_str(gen, ") {\n");
+        for (size_t j = 0; j < init->param_count; j++)
+            append_fprintf(gen, "    (void)%s;\n", init->params[j].name);
+        append_fprintf(gen, "    %s* instance = (%s*)calloc(1, sizeof(%s));\n",
+                       cls->name, cls->name, cls->name);
+        append_str(gen, "    if (instance == NULL) return NULL;\n");
+        append_fprintf(gen, "    %s_init(instance", cls->name);
+        for (size_t j = 0; j < init->param_count; j++)
+            append_fprintf(gen, ", %s", init->params[j].name);
+        append_str(gen, ");\n    return instance;\n}\n\n");
+    }
+}
+
 /**
  * @brief Generate all class definitions and methods
  */
@@ -1022,16 +1312,15 @@ static void c99_codegen_generate_classes(c99_codegen *gen, tess_program *program
     /* Methods may reference instances of classes declared later. */
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
-        if (stmt == NULL || stmt->kind != TESS_STMT_CLASS) continue;
-        append_str(gen, "\ntypedef struct ");
-        append_str(gen, stmt->as.class_decl->name);
-        append_str(gen, " ");
-        append_str(gen, stmt->as.class_decl->name);
-        append_str(gen, ";\n");
+        if (stmt && stmt->kind == TESS_STMT_CLASS && stmt->as.class_decl)
+            append_fprintf(gen, "typedef struct %s %s;\n",
+                           stmt->as.class_decl->name,
+                           stmt->as.class_decl->name);
     }
 
     /* Methods may also call methods of classes defined further down. */
     append_str(gen, "\n");
+
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
         if (stmt == NULL || stmt->kind != TESS_STMT_CLASS) continue;
@@ -1082,6 +1371,10 @@ static void c99_codegen_generate_classes(c99_codegen *gen, tess_program *program
         append_str(gen, cls->name);
         append_str(gen, ";\n");
     }
+
+    c99_codegen_generate_class_init_helpers(gen, program);
+
+    c99_codegen_generate_functions(gen, program);
 
     /* Bodies come last: a method may touch fields of any class. */
     for (size_t i = 0; i < program->count; i++) {
@@ -1147,6 +1440,11 @@ bool c99_codegen_init(c99_codegen *gen, size_t initial_capacity) {
     gen->var_classes = NULL;
     gen->var_count = 0;
     gen->var_cap = 0;
+    gen->module_aliases = NULL;
+    gen->module_targets = NULL;
+    gen->module_alias_count = 0;
+    gen->module_alias_cap = 0;
+    gen->module = NULL;
     
     return true;
 }
@@ -1172,6 +1470,16 @@ void c99_codegen_destroy(c99_codegen *gen) {
     gen->var_classes = NULL;
     gen->var_count = 0;
     gen->var_cap = 0;
+    for (size_t i = 0; i < gen->module_alias_count; i++) {
+        free(gen->module_aliases[i]);
+        free(gen->module_targets[i]);
+    }
+    free(gen->module_aliases);
+    free(gen->module_targets);
+    gen->module_aliases = NULL;
+    gen->module_targets = NULL;
+    gen->module_alias_count = 0;
+    gen->module_alias_cap = 0;
 }
 
 void c99_codegen_reset(c99_codegen *gen) {
@@ -1193,21 +1501,15 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
     append_str(gen, "#include <stdlib.h>\n");
     append_str(gen, "#include <string.h>\n");
     append_str(gen, "#include <stdbool.h>\n");
-    append_str(gen, "#include <stdarg.h>\n#include <math.h>\n\n");
+    append_str(gen, "#include <stdint.h>\n#include <math.h>\n\n");
     append_str(gen,
-        "#if defined(__GNUC__) || defined(__clang__)\n"
-        "#define TERRA_UNUSED __attribute__((unused))\n"
-        "#else\n"
-        "#define TERRA_UNUSED\n"
-        "#endif\n\n");
+        "static inline void put_int(long long v){ printf(\"%lld\\n\", v); }\n");
     append_str(gen,
-        "TERRA_UNUSED static void put_int(long long v){ printf(\"%lld\\n\", v); }\n");
+        "static inline void put_float(double v){ printf(\"%g\\n\", v); }\n");
     append_str(gen,
-        "TERRA_UNUSED static void put_float(double v){ printf(\"%g\\n\", v); }\n");
+        "static inline void put_str(const char* s){ printf(\"%s\\n\", s ? s : \"(null)\"); }\n");
     append_str(gen,
-        "TERRA_UNUSED static void put_str(const char* s){ printf(\"%s\\n\", s ? s : \"(null)\"); }\n");
-    append_str(gen,
-        "TERRA_UNUSED static char* concat(const char* a, const char* b){\n"
+        "static inline char* concat(const char* a, const char* b){\n"
         "    if(!a) a=\"\";\n"
         "    if(!b) b=\"\";\n"
         "    size_t la=strlen(a), lb=strlen(b);\n"
@@ -1217,29 +1519,29 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
         "    return r;\n"
         "}\n");
     append_str(gen,
-        "TERRA_UNUSED static long long terra_len(const char* s){ return s ? (long long)strlen(s) : 0; }\n");
+        "static inline long long terra_len(const char* s){ return s ? (long long)strlen(s) : 0; }\n");
     append_str(gen,
-        "TERRA_UNUSED static char* terra_str_int(long long v){\n"
+        "static inline char* terra_str_int(long long v){\n"
         "    char* r=(char*)malloc(32); if(!r) return NULL; snprintf(r,32,\"%lld\",v); return r;\n"
         "}\n");
     append_str(gen,
-        "TERRA_UNUSED static char* terra_str_float(double v){\n"
+        "static inline char* terra_str_float(double v){\n"
         "    char* r=(char*)malloc(32); if(!r) return NULL; snprintf(r,32,\"%g\",v); return r;\n"
         "}\n");
     append_str(gen,
-        "TERRA_UNUSED static long long terra_int_from_float(double v){ return (long long)v; }\n");
+        "static inline long long terra_int_from_float(double v){ return (long long)v; }\n");
     append_str(gen,
-        "TERRA_UNUSED static long long terra_int_from_str(const char* s){ return s ? atoll(s) : 0; }\n");
+        "static inline long long terra_int_from_str(const char* s){ return s ? atoll(s) : 0; }\n");
     append_str(gen,
-        "TERRA_UNUSED static double terra_float_from_int(long long v){ return (double)v; }\n");
+        "static inline double terra_float_from_int(long long v){ return (double)v; }\n");
     append_str(gen,
-        "TERRA_UNUSED static double terra_float_from_str(const char* s){ return s ? atof(s) : 0.0; }\n");
+        "static inline double terra_float_from_str(const char* s){ return s ? atof(s) : 0.0; }\n");
     append_str(gen,
-        "TERRA_UNUSED static void terra_assert(int cond){\n"
+        "static inline void terra_assert(int cond){\n"
         "    if(!cond){ fputs(\"assertion failed\\n\", stderr); exit(1); }\n"
         "}\n");
     append_str(gen,
-        "TERRA_UNUSED static char* terra_input(void){\n"
+        "static inline char* terra_input(void){\n"
         "    size_t cap=256, len=0; char* buf=(char*)malloc(cap); if(!buf) return NULL;\n"
         "    int c;\n"
         "    while((c=fgetc(stdin))!=EOF && c!='\\n'){\n"
@@ -1250,45 +1552,87 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
         "}\n\n");
 }
 
+static void c99_codegen_collect_modules(c99_codegen *gen, tess_program *program) {
+    if (!gen || !gen->program) return;
+    gen->module_alias_count = 0;
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *st = program->items[i];
+        if (st && st->kind == TESS_STMT_IMPORT) {
+            const char *module = st->as.import.module;
+            const char *alias = st->as.import.alias;
+            const char *module_key = module ? module : (alias ? alias : "");
+            module_add(gen, alias, module_key);
+        }
+    }
+}
+
+static char *c99_codegen_run(c99_codegen *gen, tess_program *program) {
+    if (gen->module != NULL) {
+        c99_codegen_print_runtime_info(gen);
+        c99_codegen_generate_classes(gen, program);
+        if (gen->failed || !ensure_capacity(gen, 1)) return NULL;
+        gen->buffer[gen->size] = '\0';
+        char *result = gen->buffer;
+        gen->buffer = NULL;
+        return result;
+    }
+    // Print runtime info includes
+    c99_codegen_print_runtime_info(gen);
+
+    // Generate class definitions
+    c99_codegen_generate_classes(gen, program);
+
+    // Generate main function
+    c99_codegen_generate_main(gen, program);
+
+    // Do not emit C that is known to be broken: an unsupported construct is a
+    // compile error, not a comment that silently produces a no-op program.
+    if (gen->failed) {
+        return NULL;
+    }
+
+    // Reserve room for the NUL terminator.
+    if (!ensure_capacity(gen, 1)) {
+        return NULL;
+    }
+    gen->buffer[gen->size] = '\0';
+
+    // Hand ownership of the grown buffer to the caller.
+    char *result = gen->buffer;
+    gen->buffer = NULL;
+    return result;
+}
+
 char *c99_codegen_generate(tess_program *program) {
     if (!program) {
         return NULL;
     }
 
     c99_codegen gen;
-    if (!c99_codegen_init(&gen, 65536)) {
+    if (!c99_codegen_init(&gen, 4096)) {
         return NULL;
     }
     gen.program = program;
+    c99_codegen_collect_modules(&gen, program);
 
-    // Print runtime info includes
-    c99_codegen_print_runtime_info(&gen);
+    char *result = c99_codegen_run(&gen, program);
+    return result;
+}
 
-    // Generate class definitions
-    c99_codegen_generate_classes(&gen, program);
-
-    // Generate main function
-    c99_codegen_generate_main(&gen, program);
-
-    // Do not emit C that is known to be broken: an unsupported construct is a
-    // compile error, not a comment that silently produces a no-op program.
-    if (gen.failed) {
-        c99_codegen_destroy(&gen);
+char *c99_codegen_generate_module(tess_program *program, const char *module) {
+    if (!program) {
         return NULL;
     }
 
-    // Reserve room for the NUL terminator.
-    if (!ensure_capacity(&gen, 1)) {
-        c99_codegen_destroy(&gen);
+    c99_codegen gen;
+    if (!c99_codegen_init(&gen, 4096)) {
         return NULL;
     }
-    gen.buffer[gen.size] = '\0';
+    gen.program = program;
+    gen.module = module;
+    c99_codegen_collect_modules(&gen, program);
 
-    // Hand ownership of the grown buffer to the caller.
-    char *result = gen.buffer;
-    gen.buffer = NULL;
-    c99_codegen_destroy(&gen);
-
+    char *result = c99_codegen_run(&gen, program);
     return result;
 }
 

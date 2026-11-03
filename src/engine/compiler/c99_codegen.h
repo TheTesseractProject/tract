@@ -25,6 +25,11 @@ typedef struct {
     char **var_classes;
     size_t var_count;
     size_t var_cap;
+    char **module_aliases;     // Imported module alias -> module key
+    char **module_targets;
+    size_t module_alias_count;
+    size_t module_alias_cap;
+    const char *module;        // Module key when generating an imported module
 } c99_codegen;
 
 /**
@@ -54,6 +59,14 @@ void c99_codegen_reset(c99_codegen *gen);
  *         NULL on error. Free it with free().
  */
 char *c99_codegen_generate(tess_program *program);
+
+/**
+ * @brief Generate C99 code for an imported module (module-scoped functions).
+ * @param program Parsed Tesseract program (AST) of the module
+ * @param module Module key used to namespace generated functions
+ * @return Heap-allocated C99 source owned by the caller, or NULL on error
+ */
+char *c99_codegen_generate_module(tess_program *program, const char *module);
 
 /**
  * @brief Generate C99 code from a Tesseract program into a caller buffer

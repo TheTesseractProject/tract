@@ -29,6 +29,8 @@ static tess_token_kind keyword_kind(const tess_lexer *lx, size_t start,
     if (lexeme_is(lx, start, end, "true")) return TESS_TOK_KW_TRUE;
     if (lexeme_is(lx, start, end, "false")) return TESS_TOK_KW_FALSE;
     if (lexeme_is(lx, start, end, "null")) return TESS_TOK_KW_NULL;
+    if (lexeme_is(lx, start, end, "import")) return TESS_TOK_KW_IMPORT;
+    if (lexeme_is(lx, start, end, "fn")) return TESS_TOK_KW_FN;
     return TESS_TOK_IDENT;
 }
 
@@ -294,6 +296,8 @@ const char *tess_token_kind_name(tess_token_kind kind) {
         case TESS_TOK_KW_TRUE: return "`true`";
         case TESS_TOK_KW_FALSE: return "`false`";
         case TESS_TOK_KW_NULL: return "`null`";
+        case TESS_TOK_KW_IMPORT: return "`import`";
+        case TESS_TOK_KW_FN: return "`fn`";
     }
     return "token";
 }

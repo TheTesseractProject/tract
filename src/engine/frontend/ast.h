@@ -56,7 +56,9 @@ typedef enum {
     TESS_STMT_IF,
     TESS_STMT_WHILE,
     TESS_STMT_RETURN,
-    TESS_STMT_BLOCK
+    TESS_STMT_BLOCK,
+    TESS_STMT_IMPORT,
+    TESS_STMT_FN
 } tess_stmt_kind;
 
 struct tess_stmt {
@@ -84,6 +86,18 @@ struct tess_stmt {
             tess_stmt **items;
             size_t count;
         } block;
+        struct {
+            char *module;
+            char *path;
+            char *alias;
+        } import;
+        struct {
+            tess_param *params;
+            size_t param_count;
+            char *name;
+            char *ret_type;
+            tess_stmt *fn_body;
+        } fn;
     } as;
 };
 

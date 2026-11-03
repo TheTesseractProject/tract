@@ -98,7 +98,7 @@ static void test_builtins(void) {
     check(code != NULL, "builtins code generation succeeds");
     if (code != NULL) {
         check(strstr(code, "put_float") != NULL, "put(float) maps to put_float");
-        check(strstr(code, "static void put_float") != NULL,
+        check(strstr(code, "static inline void put_float") != NULL,
               "put_float is defined in the runtime");
         check(strstr(code, "terra_len") != NULL, "len maps to terra_len");
         check(strstr(code, "terra_str_int") != NULL, "str(int) maps to terra_str_int");
@@ -172,6 +172,32 @@ static void test_small_buffer_rejected(void) {
     }
 }
 
+static void test_functions_and_c99_scopes(void) {
+    const char *src =
+        "fn add(a: int, b: int): int { return a + b; }\n"
+        "x = add(2, 3);\n"
+        "if (true) { y = 8; put(y); }\n"
+        "y = 9;\n"
+        "put(y);\n";
+    tess_program *program = parse("functions.t", src);
+    check(program != NULL, "function program parses");
+    if (program == NULL) return;
+    check(tess_sema_check(program, src, "functions.t"),
+          "function program passes sema");
+    char *code = c99_codegen_generate(program);
+    check(code != NULL, "function program generates");
+    if (code != NULL) {
+        check(strstr(code, "__auto_type") == NULL,
+              "generator emits standard C declarations");
+        check(strstr(code, "static int add(int a, int b);") != NULL,
+              "function prototype is emitted before use");
+        check(strstr(code, "long long x = add(2, 3);") != NULL,
+              "function result is assigned with an explicit C type");
+        free(code);
+    }
+    tess_program_free(program);
+}
+
 int main(void) {
     test_basic_generation();
     test_large_generation();
@@ -179,6 +205,7 @@ int main(void) {
     test_string_escaping();
     test_init_class_tracking();
     test_small_buffer_rejected();
+    test_functions_and_c99_scopes();
 
     if (failures != 0) {
         fprintf(stderr, "%d codegen test(s) failed\n", failures);
