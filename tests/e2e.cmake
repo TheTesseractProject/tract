@@ -31,8 +31,11 @@ if(NOT EXISTS "${generated}")
     message(FATAL_ERROR "terra did not produce ${generated}")
 endif()
 
+# Generated code must be warning-free, not merely compilable: invalid or
+# sloppy output (unused helpers, implicit conversions, ...) fails the suite.
 execute_process(
-    COMMAND "${COMPILER}" "${generated}" -o "${binary}"
+    COMMAND "${COMPILER}" -std=c99 -Wall -Wextra -Werror
+            "${generated}" -o "${binary}"
     RESULT_VARIABLE cc_result
     OUTPUT_VARIABLE cc_stdout
     ERROR_VARIABLE cc_stderr

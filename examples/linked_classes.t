@@ -22,7 +22,7 @@ Box {
         self.value = v;
     }
 
-    doubled {
+    doubled: int {
         return self.value * 2;
     }
 }

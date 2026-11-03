@@ -75,6 +75,24 @@ static tess_stmt *parse_statement(tess_parser *p) {
     return stmt;
 }
 
+/* Kind of the token `ahead` positions past `next` (1 = the token after
+ * `next`), without consuming anything: class member dispatch needs three
+ * lookahead tokens to tell `name: type;` (field) from `name: Type { ... }`
+ * (method with a return type). */
+static tess_token_kind peek_kind_ahead(tess_parser *p, int ahead) {
+    tess_lexer save = p->lx;
+    tess_token tok;
+    tok.kind = TESS_TOK_EOF;
+    for (int i = 0; i < ahead; i++) {
+        if (!tess_lexer_next(&p->lx, &tok)) {
+            tok.kind = TESS_TOK_EOF;
+            break;
+        }
+    }
+    p->lx = save;
+    return tok.kind;
+}
+
 static bool lex_into(tess_parser *p, tess_token *tok) {
     if (!tess_lexer_next(&p->lx, tok)) {
         fail_at(p, p->lx.error ? p->lx.error : "lexical error",
@@ -289,6 +307,7 @@ static bool parse_float_token(tess_parser *p, tess_token tok, double *out) {
 }
 
 static tess_expr *parse_expr(tess_parser *p);
+static tess_expr *parse_expr_impl(tess_parser *p);
 
 static tess_expr **parse_args(tess_parser *p, size_t *out_count,
                               uint32_t *out_end) {
@@ -516,7 +535,9 @@ static tess_expr *parse_unary_impl(tess_parser *p) {
     }
     uint32_t start = (uint32_t)p->cur.start;
     advance(p);
-    tess_expr *operand = parse_unary_impl(p);
+    /* Recurse through the guarded wrapper: a chain of unary operators must be
+     * depth-checked just like parenthesized nesting. */
+    tess_expr *operand = parse_unary(p);
     if (operand == NULL) {
         return NULL;
     }
@@ -602,7 +623,22 @@ static tess_expr *parse_binary(tess_parser *p, int min_prec) {
     return lhs;
 }
 
+/* Parenthesized expressions, nested calls, and ternary branches all recurse
+ * through this entry point. Bound the complete expression tree before it can
+ * exhaust the C stack in parsing or later recursive AST passes. */
 static tess_expr *parse_expr(tess_parser *p) {
+    if (p->depth >= TESS_MAX_DEPTH) {
+        fail_at(p, "maximum expression nesting depth exceeded", p->cur.start,
+                p->cur.end);
+        return NULL;
+    }
+    p->depth++;
+    tess_expr *e = parse_expr_impl(p);
+    p->depth--;
+    return e;
+}
+
+static tess_expr *parse_expr_impl(tess_parser *p) {
     tess_expr *cond = parse_binary(p, 1);
     if (cond == NULL) {
         return NULL;
@@ -611,12 +647,10 @@ static tess_expr *parse_expr(tess_parser *p) {
         return cond;
     }
     advance(p);
-    tess_expr *then_expr = NULL;
-    if (p->cur.kind != TESS_TOK_COLON) {
-        then_expr = parse_expr(p);
-        if (then_expr == NULL) {
-            return NULL;
-        }
+    /* Recursive branches are guarded by parse_expr. */
+    tess_expr *then_expr = parse_expr(p);
+    if (then_expr == NULL) {
+        return NULL;
     }
     if (!expect(p, TESS_TOK_COLON, "`:` in a conditional expression")) {
         return NULL;
@@ -869,6 +903,21 @@ static bool parse_method(tess_parser *p, tess_vec *methods) {
             return false;
         }
     }
+    char *ret_type = NULL;
+    if (p->cur.kind == TESS_TOK_COLON) {
+        advance(p);
+        if (p->cur.kind != TESS_TOK_IDENT) {
+            fail_at(p, "expected a return type after `:`", p->cur.start,
+                    p->cur.end);
+            return false;
+        }
+        ret_type = copy_ident(p, p->cur);
+        if (ret_type == NULL) {
+            return false;
+        }
+        advance(p);
+    }
+
     tess_stmt *body = parse_block_body(p);
     if (body == NULL) {
         return false;
@@ -878,6 +927,7 @@ static bool parse_method(tess_parser *p, tess_vec *methods) {
     if (method.name == NULL) {
         return false;
     }
+    method.ret_type = ret_type;
     method.params = params.items;
     method.param_count = params.count;
     method.body = body;
@@ -914,7 +964,14 @@ static tess_stmt *parse_class(tess_parser *p) {
         }
         
         // Check next token
-        if (p->next.kind == TESS_TOK_COLON) {
+        if (p->next.kind == TESS_TOK_COLON &&
+            peek_kind_ahead(p, 2) == TESS_TOK_LBRACE) {
+            // `name: Type { ... }` is a method with a return type; a field
+            // would be terminated by `;` right after the type.
+            if (!parse_method(p, &methods)) {
+                return NULL;
+            }
+        } else if (p->next.kind == TESS_TOK_COLON) {
             // This is a field
             if (!parse_field(p, &fields)) {
                 return NULL;
@@ -937,7 +994,7 @@ static tess_stmt *parse_class(tess_parser *p) {
         return NULL;
     }
     
-    // Создаем класс структуру
+    // Allocate the class structure
     tess_class *cls = tess_arena_alloc(&p->program->arena, sizeof *cls);
     if (cls == NULL) {
         return NULL;

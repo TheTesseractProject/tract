@@ -13,7 +13,6 @@ typedef struct {
 bool engine_build_file(FILE *input_file, const char *input_path,
                        const char *output_path,
                        const terra_build_options *options);
-char* generate_c99_code(const char *source, size_t len, const char *path);
 char* generate_c99_code_from_program(tess_program *program, const char *path,
-                                     bool quiet);
+                                     const terra_build_options *options);
 void free_generated_code(char *code);

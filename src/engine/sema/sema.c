@@ -52,10 +52,13 @@ typedef struct tess_scope {
     size_t count;
 } tess_scope;
 
-/* Imported module alias: local name -> module key. */
+/* Imported module alias: local name -> module key. Entries pre-registered for
+ * the built-in native modules are marked, so a later `import` may rebind them
+ * without counting as a duplicate declaration. */
 typedef struct {
     char *alias;
     char *module;
+    bool builtin;
 } tess_module_ref;
 
 typedef struct {
@@ -69,6 +72,7 @@ typedef struct {
     char *module;
     char *name;
     char *ret_type;
+    char **param_types;   /* one Tesseract type name per parameter */
     size_t param_count;
 } tess_fn_entry;
 
@@ -205,6 +209,9 @@ typedef struct {
     tess_scope  *scope;
     /* Current class being analysed (NULL at top level). */
     tess_class  *current_class;
+    /* Enclosing fn/method, for return-type validation. */
+    tess_stmt   *current_fn;
+    tess_method *current_method;
     /* Imported module aliases: local alias -> module key. */
     tess_module_table modules;
     tess_fn_table fns;
@@ -266,10 +273,21 @@ static void pop_scope(tess_sema *s) {
 
 /* Module alias table: local alias -> module key. */
 static bool module_table_add(tess_module_table *t, const char *alias,
-                             const char *module) {
+                             const char *module, bool builtin) {
     if (alias == NULL || module == NULL) return false;
     for (size_t i = 0; i < t->count; i++) {
-        if (strcmp(t->items[i].alias, alias) == 0) return true;
+        if (strcmp(t->items[i].alias, alias) == 0) {
+            /* An explicit import may rebind a built-in registration. */
+            if (t->items[i].builtin && !builtin) {
+                char *m = core_alloc(strlen(module) + 1);
+                if (m == NULL) return false;
+                strcpy(m, module);
+                core_free(t->items[i].module);
+                t->items[i].module = m;
+                t->items[i].builtin = false;
+            }
+            return true;
+        }
     }
     if (t->count == t->cap) {
         size_t cap = t->cap == 0 ? 8 : t->cap * 2;
@@ -293,6 +311,7 @@ static bool module_table_add(tess_module_table *t, const char *alias,
     strcpy(m, module);
     t->items[t->count].alias = a;
     t->items[t->count].module = m;
+    t->items[t->count].builtin = builtin;
     t->count++;
     return true;
 }
@@ -309,7 +328,8 @@ static const char *module_table_find(tess_module_table *t, const char *alias) {
 
 /* Function table: module-qualified or top-level functions. */
 static bool fn_table_add(tess_fn_table *t, const char *module, const char *name,
-                        const char *ret_type, size_t param_count) {
+                        const char *ret_type, tess_param *params,
+                        size_t param_count) {
     if (name == NULL) return false;
     /* Names only collide within the same module namespace. */
     for (size_t i = 0; i < t->count; i++) {
@@ -329,11 +349,33 @@ static bool fn_table_add(tess_fn_table *t, const char *module, const char *name,
         t->items = arr;
         t->cap = cap;
     }
+    char **pt = NULL;
+    if (param_count != 0) {
+        pt = core_alloc(param_count * sizeof *pt);
+        if (pt == NULL) return false;
+        memset(pt, 0, param_count * sizeof *pt);
+        for (size_t i = 0; i < param_count; i++) {
+            const char *ptype = params != NULL ? params[i].type : NULL;
+            if (ptype != NULL) {
+                pt[i] = core_alloc(strlen(ptype) + 1);
+                if (pt[i] == NULL) {
+                    for (size_t j = 0; j < i; j++) core_free(pt[j]);
+                    core_free(pt);
+                    return false;
+                }
+                strcpy(pt[i], ptype);
+            }
+        }
+    }
     char *n = core_alloc(strlen(name) + 1);
     char *r = ret_type == NULL ? NULL : core_alloc(strlen(ret_type) + 1);
     char *m = module == NULL ? NULL : core_alloc(strlen(module) + 1);
     if (n == NULL || (ret_type != NULL && r == NULL) ||
         (module != NULL && m == NULL)) {
+        if (pt != NULL) {
+            for (size_t i = 0; i < param_count; i++) core_free(pt[i]);
+            core_free(pt);
+        }
         core_free(n); core_free(r); core_free(m); return false;
     }
     strcpy(n, name);
@@ -342,6 +384,7 @@ static bool fn_table_add(tess_fn_table *t, const char *module, const char *name,
     t->items[t->count].module = m;
     t->items[t->count].name = n;
     t->items[t->count].ret_type = r;
+    t->items[t->count].param_types = pt;
     t->items[t->count].param_count = param_count;
     t->count++;
     return true;
@@ -372,6 +415,12 @@ static void module_table_destroy(tess_module_table *t) {
 
 static void fn_table_destroy(tess_fn_table *t) {
     for (size_t i = 0; i < t->count; i++) {
+        if (t->items[i].param_types != NULL) {
+            for (size_t j = 0; j < t->items[i].param_count; j++) {
+                core_free(t->items[i].param_types[j]);
+            }
+            core_free(t->items[i].param_types);
+        }
         core_free(t->items[i].module);
         core_free(t->items[i].name);
         core_free(t->items[i].ret_type);
@@ -414,10 +463,11 @@ static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
                 if (field != NULL) {
                     return type_from_name(s, field->type, NULL);
                 }
-                /* Methods currently have no declared return type in the AST
-                 * (the backend emits `int`), so keep the historical default. */
-                if (class_find_method(cls, e->as.member.name) != NULL) {
-                    return TYPE_INT;
+                /* Methods carry a declared return type; NULL means void. */
+                tess_method *m = class_find_method(cls, e->as.member.name);
+                if (m != NULL) {
+                    if (m->ret_type == NULL) return TYPE_NULL;
+                    return type_from_name(s, m->ret_type, NULL);
                 }
             }
             return TYPE_NULL;
@@ -438,6 +488,17 @@ static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
                     if (strcmp(name, "float") == 0) return TYPE_FLOAT;
                     if (strcmp(name, "len") == 0) return TYPE_INT;
                     if (strcmp(name, "input") == 0) return TYPE_STR;
+                }
+            } else if (e->as.call.callee->kind == TESS_EXPR_MEMBER &&
+                       e->as.call.callee->as.member.object != NULL) {
+                tess_class *cls = receiver_class(
+                    s, e->as.call.callee->as.member.object);
+                const char *mname = e->as.call.callee->as.member.name;
+                if (cls != NULL && mname != NULL) {
+                    tess_method *m = class_find_method(cls, mname);
+                    if (m != NULL && m->ret_type != NULL) {
+                        return type_from_name(s, m->ret_type, NULL);
+                    }
                 }
             }
             return TYPE_NULL;
@@ -814,12 +875,22 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                     }
                     
                     /* Type checking for built-in arguments */
+                    bool output_builtin =
+                        strcmp(callee->as.ident, "put") == 0 ||
+                        strcmp(callee->as.ident, "print") == 0 ||
+                        strcmp(callee->as.ident, "putln") == 0;
                     for (size_t i = 0; i < argc; i++) {
                         tess_expr *arg = e->as.call.args[i];
-                        tess_type arg_type = infer_expr_type(s, arg);
-                        
-                        /* Simple type validation - built-ins generally accept various types */
-                        (void)arg_type; // Future enhancement
+                        if (arg == NULL) continue;
+                        if (output_builtin &&
+                            receiver_class(s, arg) != NULL) {
+                            char msg[256];
+                            snprintf(msg, sizeof msg,
+                                     "cannot print a class instance (`%s`)",
+                                     callee->as.ident);
+                            report(s, arg->start, arg->end, msg);
+                            return false;
+                        }
                     }
                 }
                 if (sym == NULL && fn_table_find(&s->fns, NULL,
@@ -870,10 +941,10 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                         if (method != NULL) {
                             if (!check_method_args(s, e, cls, method, mname, argc))
                                 return false;
-                        } else if (argc != 0) {
+                        } else {
                             char msg[256];
                             snprintf(msg, sizeof msg,
-                                     "class `%s` has no `init` taking arguments",
+                                     "class `%s` has no `init` method",
                                      cls->name);
                             report(s, e->start, e->end, msg);
                             return false;
@@ -1132,8 +1203,27 @@ static bool check_fn_call(tess_sema *s, tess_expr *callee, size_t argc,
                "wrong number of arguments to function");
         return false;
     }
-    /* Parameter types are not retained in this compact lookup table yet. */
-    (void)args;
+    /* Argument types are validated against the declared parameter types. */
+    for (size_t i = 0; i < argc; i++) {
+        const char *want_name = fn->param_types != NULL
+            ? fn->param_types[i] : NULL;
+        if (want_name == NULL) continue;
+        tess_class *want_cls = NULL;
+        tess_type want = type_from_name(s, want_name, &want_cls);
+        if (want == TYPE_NULL) continue;
+        tess_type got = infer_expr_type(s, args != NULL ? args[i] : NULL);
+        if (!can_assign(want, got) && got != TYPE_NULL) {
+            char msg[256];
+            snprintf(msg, sizeof msg,
+                     "argument %zu of `%s` has type %s, expected %s",
+                     i + 1, name, type_label(got), type_label(want));
+            report(s, args != NULL && args[i] != NULL ? args[i]->start
+                       : callee->start,
+                   args != NULL && args[i] != NULL ? args[i]->end
+                       : callee->end, msg);
+            return false;
+        }
+    }
     return true;
 }
 
@@ -1178,6 +1268,45 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
             /* Check the value first so its type is known. */
             if (!check_expr(s, value)) return false;
 
+            /* A call whose function/method returns nothing has no value to
+             * assign; the backend cannot spell it in C either. */
+            if (value->kind == TESS_EXPR_CALL && value->as.call.callee != NULL) {
+                if (value->as.call.callee->kind == TESS_EXPR_IDENT) {
+                    tess_fn_entry *fn = fn_table_find(
+                        &s->fns, NULL, value->as.call.callee->as.ident);
+                    if (fn != NULL && fn->ret_type == NULL) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "function `%s` returns no value",
+                                 fn->name);
+                        report(s, value->start, value->end, msg);
+                        return false;
+                    }
+                } else if (value->as.call.callee->kind == TESS_EXPR_MEMBER &&
+                           value->as.call.callee->as.member.object != NULL &&
+                           value->as.call.callee->as.member.object->kind
+                               != TESS_EXPR_MODULE) {
+                    tess_class *cls = receiver_class(
+                        s, value->as.call.callee->as.member.object);
+                    const char *mname = value->as.call.callee->as.member.name;
+                    /* `Class.init(...)` constructs an instance; it is not a
+                     * plain method call and always yields a value. */
+                    if (cls != NULL && mname != NULL &&
+                        strcmp(mname, "new") != 0 &&
+                        strcmp(mname, "init") != 0) {
+                        tess_method *m = class_find_method(cls, mname);
+                        if (m != NULL && m->ret_type == NULL) {
+                            char msg[256];
+                            snprintf(msg, sizeof msg,
+                                     "method `%s.%s` returns no value",
+                                     cls->name, mname);
+                            report(s, value->start, value->end, msg);
+                            return false;
+                        }
+                    }
+                }
+            }
+
             if (target->kind == TESS_EXPR_IDENT) {
                 /* Declare the variable if this is its first assignment
                  * (Tesseract uses assign-to-declare). */
@@ -1201,6 +1330,11 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                     /* Existing variable: enforce assignment compatibility. */
                     tess_type target_type = infer_expr_type(s, target);
                     tess_type value_type = infer_expr_type(s, value);
+                    /* A construction value is class-typed even though the
+                     * lightweight inference reports NULL. */
+                    if (class_from_construction(s, value) != NULL) {
+                        value_type = TYPE_CLASS;
+                    }
                     if (!can_assign(target_type, value_type) &&
                         value_type != TYPE_NULL) {
                         char msg[256];
@@ -1299,8 +1433,46 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                        "`return` outside a function or method body");
                 return false;
             }
-            if (st->as.ret != NULL)
-                return check_expr(s, st->as.ret);
+            const char *want_name = NULL;
+            const char *what = NULL;
+            if (s->current_method != NULL) {
+                want_name = s->current_method->ret_type;
+                what = "method";
+            } else if (s->current_fn != NULL) {
+                want_name = s->current_fn->as.fn.ret_type;
+                what = "function";
+            }
+            if (want_name == NULL) {
+                if (st->as.ret != NULL) {
+                    char msg[256];
+                    snprintf(msg, sizeof msg,
+                             "void %s cannot return a value",
+                             what != NULL ? what : "function");
+                    report(s, st->start, st->end, msg);
+                    return false;
+                }
+                return true;
+            }
+            if (st->as.ret == NULL) {
+                char msg[256];
+                snprintf(msg, sizeof msg,
+                         "%s declares a return value; `return` needs one",
+                         what != NULL ? what : "function");
+                report(s, st->start, st->end, msg);
+                return false;
+            }
+            if (!check_expr(s, st->as.ret)) return false;
+            tess_class *want_cls = NULL;
+            tess_type want = type_from_name(s, want_name, &want_cls);
+            tess_type got = infer_expr_type(s, st->as.ret);
+            if (!can_assign(want, got) && got != TYPE_NULL) {
+                char msg[256];
+                snprintf(msg, sizeof msg,
+                         "return value has type %s, expected %s",
+                         type_label(got), type_label(want));
+                report(s, st->as.ret->start, st->as.ret->end, msg);
+                return false;
+            }
             return true;
         }
 
@@ -1373,12 +1545,26 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                 }
             }
 
+            /* Method return types must name a primitive or a known class. */
+            for (size_t i = 0; i < cls->method_count; i++) {
+                const char *ret = cls->methods[i].ret_type;
+                if (ret != NULL && !type_name_known(s, ret)) {
+                    char msg[256];
+                    snprintf(msg, sizeof msg,
+                             "unknown return type `%s` for method `%s`",
+                             ret, cls->methods[i].name);
+                    report(s, cls->methods[i].start, cls->methods[i].end, msg);
+                    return false;
+                }
+            }
+
             /* Check each method body in its own scope. */
             tess_class *saved_class = s->current_class;
             s->current_class = cls;
 
             for (size_t i = 0; i < cls->method_count; i++) {
                 tess_method *m = &cls->methods[i];
+                s->current_method = m;
                 tess_scope msc;
                 if (!push_scope(s, &msc, true)) {
                     report(s, m->start, m->end,
@@ -1440,6 +1626,7 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
 
                 bool ok = check_stmt(s, m->body);
                 pop_scope(s);
+                s->current_method = NULL;
                 if (!ok) {
                     s->current_class = saved_class;
                     return false;
@@ -1472,7 +1659,16 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                 report(s, st->start, st->end, msg);
                 return false;
             }
-            if (!module_table_add(&s->modules, alias, module_key)) {
+            for (size_t i = 0; i < s->modules.count; i++) {
+                if (s->modules.items[i].builtin) continue;
+                if (strcmp(s->modules.items[i].alias, alias) == 0 &&
+                    strcmp(s->modules.items[i].module, module_key) != 0) {
+                    report(s, st->start, st->end,
+                           "duplicate import alias bound to another module");
+                    return false;
+                }
+            }
+            if (!module_table_add(&s->modules, alias, module_key, false)) {
                 report(s, st->start, st->end,
                        "out of memory while declaring module");
                 return false;
@@ -1548,7 +1744,9 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                 pop_scope(s);
                 return false;
             }
+            s->current_fn = st;
             bool ok = check_stmt(s, st->as.fn.fn_body);
+            s->current_fn = NULL;
             pop_scope(s);
             return ok;
         }
@@ -1574,27 +1772,33 @@ bool tess_sema_check(tess_program *program, const char *src, const char *path) {
     }
 
     /* Register built-in functions */
-    scope_define(s.scope, "put",    SYM_BUILTIN, TYPE_NULL, NULL, 1, false);
-    scope_define(s.scope, "assert", SYM_BUILTIN, TYPE_NULL, NULL, 1, false);
-    scope_define(s.scope, "len",    SYM_BUILTIN, TYPE_INT, NULL, 1, false);
-    scope_define(s.scope, "str",    SYM_BUILTIN, TYPE_STR, NULL, 1, false);
-    scope_define(s.scope, "int",    SYM_BUILTIN, TYPE_INT, NULL, 1, false);
-    scope_define(s.scope, "float",  SYM_BUILTIN, TYPE_FLOAT, NULL, 1, false);
-    scope_define(s.scope, "print",  SYM_BUILTIN, TYPE_NULL, NULL, 1, false);
-    scope_define(s.scope, "input",  SYM_BUILTIN, TYPE_STR, NULL, 0, false);
-    scope_define(s.scope, "putln",  SYM_BUILTIN, TYPE_NULL, NULL, 1, false);
+    bool builtins_ok =
+        scope_define(s.scope, "put",    SYM_BUILTIN, TYPE_NULL, NULL, 1, false) &&
+        scope_define(s.scope, "assert", SYM_BUILTIN, TYPE_NULL, NULL, 1, false) &&
+        scope_define(s.scope, "len",    SYM_BUILTIN, TYPE_INT, NULL, 1, false) &&
+        scope_define(s.scope, "str",    SYM_BUILTIN, TYPE_STR, NULL, 1, false) &&
+        scope_define(s.scope, "int",    SYM_BUILTIN, TYPE_INT, NULL, 1, false) &&
+        scope_define(s.scope, "float",  SYM_BUILTIN, TYPE_FLOAT, NULL, 1, false) &&
+        scope_define(s.scope, "print",  SYM_BUILTIN, TYPE_NULL, NULL, 1, false) &&
+        scope_define(s.scope, "input",  SYM_BUILTIN, TYPE_STR, NULL, 0, false) &&
+        scope_define(s.scope, "putln",  SYM_BUILTIN, TYPE_NULL, NULL, 1, false);
 
     /* Built-in native modules available for `import`. */
     const char *native_modules[] = {"math", "c", "std", "libc"};
-    for (size_t i = 0; i < sizeof native_modules / sizeof native_modules[0];
-         i++) {
-        module_table_add(&s.modules, native_modules[i], native_modules[i]);
+    for (size_t i = 0; builtins_ok &&
+         i < sizeof native_modules / sizeof native_modules[0]; i++) {
+        builtins_ok = module_table_add(&s.modules, native_modules[i],
+                                       native_modules[i], true);
+    }
+    if (!builtins_ok) {
+        report(&s, 0, 0, "out of memory while registering built-ins");
     }
 
     /* Pass 1: pre-declare classes for forward type references. Functions are
      * collected in a separate pass below for the same source-order freedom. */
-    for (size_t i = 0; i < program->count; i++) {
+    for (size_t i = 0; i < program->count && !s.failed; i++) {
         tess_stmt *st = program->items[i];
+        if (st == NULL) continue;
         if (st->kind == TESS_STMT_CLASS) {
             tess_class *cls = st->as.class_decl;
             if (!scope_define(s.scope, cls->name, SYM_CLASS, TYPE_CLASS, cls, -1, false)) {
@@ -1602,8 +1806,7 @@ bool tess_sema_check(tess_program *program, const char *src, const char *path) {
                 snprintf(msg, sizeof msg, "duplicate class name `%s`",
                          cls->name);
                 report(&s, cls->start, cls->end, msg);
-                pop_scope(&s);
-                return false;
+                break;
             }
         }
     }
@@ -1622,6 +1825,7 @@ bool tess_sema_check(tess_program *program, const char *src, const char *path) {
         }
         if (!s.failed && !fn_table_add(&s.fns, NULL, st->as.fn.name,
                                        st->as.fn.ret_type,
+                                       st->as.fn.params,
                                        st->as.fn.param_count))
             report(&s, st->start, st->end,
                    "out of memory while declaring function");

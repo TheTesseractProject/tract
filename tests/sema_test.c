@@ -60,7 +60,7 @@ static void test_class(void) {
         "Counter {\n"
         "    n: int;\n"
         "    inc { n = n + 1; }\n"
-        "    val { return n; }\n"
+        "    val: int { return n; }\n"
         "}\n"
         "c = Counter.new;\n"
         "c.inc;\n"

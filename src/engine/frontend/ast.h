@@ -31,6 +31,7 @@ typedef struct {
 
 typedef struct {
     char *name;
+    char *ret_type;   /* NULL means the method returns nothing (void) */
     tess_param *params;
     size_t param_count;
     tess_stmt *body;

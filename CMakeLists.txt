@@ -13,13 +13,20 @@ endif()
 
 # Aggressive optimization is opt-in for local release builds and is guarded so
 # it does not break macOS/Windows or cross-compilation.
-option(TERRA_NATIVE_OPT "Use -march=native and link-time optimization" ON)
+option(TERRA_NATIVE_OPT
+       "Use -march=native and link-time optimization (host-specific, opt-in)"
+       OFF)
 if(TERRA_NATIVE_OPT AND NOT MSVC AND NOT APPLE)
     add_compile_options(-O3 -march=native -flto -funroll-loops
                         -fomit-frame-pointer -DNDEBUG)
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s -Wl,--gc-sections -flto")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections -flto")
 elseif(NOT MSVC)
     add_compile_options(-O2 -DNDEBUG)
+    # Stripping is a release-packaging choice, not a default: keep symbols
+    # available for debugging otherwise.
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        string(APPEND CMAKE_EXE_LINKER_FLAGS " -s")
+    endif()
 endif()
 
 # Output directory for binaries
@@ -27,7 +34,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin")
 
 # Collect all source files recursively, excluding the separate core library
 # (it is built by add_subdirectory(src/core) and linked as a target).
-file(GLOB_RECURSE SOURCES "src/*.c")
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.c")
 list(FILTER SOURCES EXCLUDE REGEX "/src/core/")
 message("Detected sources: ${SOURCES}")
 
@@ -84,7 +91,9 @@ if(BUILD_TESTING)
     add_test(NAME codegen COMMAND codegen_tests)
 
     # End-to-end: compile a Tesseract example, build the generated C, run it.
-    foreach(example class hello_world even_odd matrix_mult linked_classes)
+    # The list covers the plain (.t) examples plus the .tes extension form.
+    foreach(example class hello_world even_odd matrix_mult linked_classes
+                    math_demo test_example.tes)
         if(example STREQUAL "class")
             set(example_expect "world")
         elseif(example STREQUAL "hello_world")
@@ -93,17 +102,26 @@ if(BUILD_TESTING)
             set(example_expect "Even")
         elseif(example STREQUAL "linked_classes")
             set(example_expect "Doubled:")
+        elseif(example STREQUAL "math_demo")
+            set(example_expect "sqrt(9)")
+        elseif(example STREQUAL "test_example.tes")
+            set(example_expect "10")
         else()
             set(example_expect "Product")
         endif()
+        set(example_source "${CMAKE_SOURCE_DIR}/examples/${example}")
+        if(NOT example MATCHES "\\.tes$")
+            string(APPEND example_source ".t")
+        endif()
+        string(REPLACE "." "_" test_name "${example}")
         add_test(
-            NAME e2e_${example}
+            NAME e2e_${test_name}
             COMMAND ${CMAKE_COMMAND}
                 -DTERRA=$<TARGET_FILE:${PROJECT_NAME}>
                 -DCOMPILER=${CMAKE_C_COMPILER}
-                -DSOURCE=${CMAKE_SOURCE_DIR}/examples/${example}.t
+                -DSOURCE=${example_source}
                 -DEXPECT=${example_expect}
-                -DWORK=${CMAKE_CURRENT_BINARY_DIR}/e2e_${example}
+                -DWORK=${CMAKE_CURRENT_BINARY_DIR}/e2e_${test_name}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e.cmake
         )
     endforeach()

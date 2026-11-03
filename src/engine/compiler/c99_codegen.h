@@ -6,7 +6,7 @@
 
 /**
  * @brief C99 Code Generator Context
- * 
+ *
  * Manages indentation, buffer management, and emitted symbols during code generation.
  */
 typedef struct {
@@ -14,7 +14,6 @@ typedef struct {
     size_t capacity;           // Total buffer capacity
     size_t size;               // Current output size
     int indent_level;          // Current indentation level
-    bool has_main;             // Whether main() was already generated
     bool failed;               // An unsupported construct was encountered
     tess_program *program;     // Source program (for class lookup)
     const char *current_class; // Current class being generated
@@ -30,6 +29,9 @@ typedef struct {
     size_t module_alias_count;
     size_t module_alias_cap;
     const char *module;        // Module key when generating an imported module
+    unsigned runtime_used;     // Bitmask of runtime helpers the output references
+    bool in_function;          // Currently inside a top-level fn or method body
+    bool fn_returns_void;      // The function being generated returns no value
 } c99_codegen;
 
 /**
@@ -45,12 +47,6 @@ bool c99_codegen_init(c99_codegen *gen, size_t initial_capacity);
  * @param gen Pointer to codegen context
  */
 void c99_codegen_destroy(c99_codegen *gen);
-
-/**
- * @brief Reset the code generator state (clear buffer but keep capacity)
- * @param gen Pointer to codegen context
- */
-void c99_codegen_reset(c99_codegen *gen);
 
 /**
  * @brief Generate C99 code from a Tesseract program into a new allocation

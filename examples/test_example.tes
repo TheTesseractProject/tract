@@ -6,7 +6,7 @@ Test {
         self.value = v;
     }
 
-    double_value {
+    double_value: int {
         return self.value * 2;
     }
 }

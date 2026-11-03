@@ -1,15 +1,16 @@
 #pragma once
 
 #include "colors.h"
+#include "output.h"
 
-#define MSG(str) fputs(str, stdout)
-#define MSGF(str, ...) printf(str, __VA_ARGS__)
-#define ERR(str) fputs(str, stderr)
-#define ERRF(str, ...) fprintf(stderr, str, __VA_ARGS__)
-#define MSGLN(str) do { fputs(str, stdout); fputc('\n', stdout); } while(0)
-#define MSGFLN(str, ...) do { printf(str, __VA_ARGS__); fputc('\n', stdout); } while(0)
-#define ERRLN(str) do { fputs(str, stderr); fputc('\n', stderr); } while(0)
-#define ERRFLN(str, ...) do { fprintf(stderr, str, __VA_ARGS__); fputc('\n', stderr); } while(0)
+#define MSG(str) terra_out(str)
+#define MSGF(str, ...) terra_outf(str, __VA_ARGS__)
+#define ERR(str) terra_err(str)
+#define ERRF(str, ...) terra_errf(str, __VA_ARGS__)
+#define MSGLN(str) do { terra_out(str); fputc('\n', stdout); } while(0)
+#define MSGFLN(str, ...) do { terra_outf(str, __VA_ARGS__); fputc('\n', stdout); } while(0)
+#define ERRLN(str) do { terra_err(str); fputc('\n', stderr); } while(0)
+#define ERRFLN(str, ...) do { terra_errf(str, __VA_ARGS__); fputc('\n', stderr); } while(0)
 
 #define TERRA_CODENAME "alpha"
 
@@ -65,6 +66,7 @@
 #define ERR_MULTIPLE_BUILD ERROR_MSG "Cannot specify multiple files for build, build a single file or the entire project directory"
 #define ERR_MULTIPLE_OUTPUT ERROR_MSG "Attempt to specify multiple files for output"
 #define ERR_OUTPUT_FILE_CREATE ERROR_MSG "Unable to create output file '" COLOR_RED "%s" COLOR_RESET "'"
+#define ERR_OUTPUT_IS_INPUT ERROR_MSG "Refusing to overwrite the source file '" COLOR_RED "%s" COLOR_RESET "' with generated output"
 #define ERR_CHECK_STDOUT_CONFLICT ERROR_MSG "--check cannot be combined with --stdout"
 #define ERR_CHECK_OUTPUT_CONFLICT ERROR_MSG "--check cannot be combined with --output"
 #define ERR_CHECK_ONLY_MSG TERRA ": " COLOR_GREEN "Check finished" COLOR_RESET

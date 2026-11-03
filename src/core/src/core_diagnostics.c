@@ -279,8 +279,15 @@ core_located *core_locate(const char *src, core_span span, const char *message) 
         }
     }
 
-    bool windowed = target >= CORE_WINDOW;
-    size_t cut = windowed ? target - (CORE_WINDOW - 10u) : 0;
+    /* Window long lines on both sides of the caret: a diagnostic must never
+     * dump a 200 KB source line into a terminal. */
+    bool windowed = target >= CORE_WINDOW || ncells > 4u * CORE_WINDOW;
+    size_t cut = 0;
+    if (windowed) {
+        cut = target > (CORE_WINDOW - 10u) ? target - (CORE_WINDOW - 10u) : 0;
+    }
+    size_t right_limit = windowed ? cut + CORE_WINDOW : 0;
+    bool truncated_right = false;
 
     size_t first_index = 0;
     if (windowed) {
@@ -295,6 +302,10 @@ core_located *core_locate(const char *src, core_span span, const char *message) 
     bool ok = true;
     const unsigned char *u = (const unsigned char *)text_line;
     for (size_t i = first_index; ok && i < ncells; i++) {
+        if (windowed && cells[i].col >= right_limit) {
+            truncated_right = true;
+            break;
+        }
         if (u[cells[i].off] == '\t') {
             ok = db_spaces(&body, cells[i].width);
         } else {
@@ -318,20 +329,22 @@ core_located *core_locate(const char *src, core_span span, const char *message) 
         body.len = 0;
     }
 
-    char *snippet = NULL;
-    if (windowed) {
-        snippet = core_alloc(body.len + 3 + 1);
-        if (snippet) {
+    size_t pre = windowed ? 3 : 0;
+    size_t suf = truncated_right ? 3 : 0;
+    char *snippet = core_alloc(pre + body.len + suf + 1);
+    if (snippet) {
+        size_t off = 0;
+        if (pre != 0) {
             memcpy(snippet, "\xE2\x80\xA6", 3);
-            memcpy(snippet + 3, body.data, body.len);
-            snippet[body.len + 3] = '\0';
+            off = 3;
         }
-    } else {
-        snippet = core_alloc(body.len + 1);
-        if (snippet) {
-            memcpy(snippet, body.data, body.len);
-            snippet[body.len] = '\0';
+        memcpy(snippet + off, body.data, body.len);
+        off += body.len;
+        if (suf != 0) {
+            memcpy(snippet + off, "\xE2\x80\xA6", 3);
+            off += 3;
         }
+        snippet[off] = '\0';
     }
     core_free(body.data);
     core_free(cells);
