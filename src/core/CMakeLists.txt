@@ -20,8 +20,6 @@ endif()
 
 if(CORE_PROFILE STREQUAL "FULL")
     target_compile_definitions(core PUBLIC CORE_PROFILE_FULL)
-elseif(CORE_PROFILE STREQUAL "RUNTIME")
-    target_compile_definitions(core PUBLIC CORE_PROFILE_RUNTIME)
 elseif(CORE_PROFILE STREQUAL "EMBEDDED")
     target_compile_definitions(core PUBLIC CORE_PROFILE_EMBEDDED)
 else()
