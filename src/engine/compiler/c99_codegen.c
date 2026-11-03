@@ -11,6 +11,8 @@
  */
 static bool ensure_capacity(c99_codegen *gen, size_t extra) {
     if (!gen || extra == 0) return true;
+    /* Include one byte for the trailing NUL and reject arithmetic wraparound
+     * before computing the new allocation size. */
     if (extra > SIZE_MAX - gen->size - 1) return false;
     size_t needed = gen->size + extra + 1;
     if (needed > gen->capacity) {
@@ -121,6 +123,7 @@ static void append_indent(c99_codegen *gen) {
 }
 
 static void reset_function_state(c99_codegen *gen) {
+    /* Name/type tracking is local to one generated C function. */
     gen->declared_count = 0;
     gen->var_count = 0;
 }
@@ -166,6 +169,8 @@ static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
         case TESS_EXPR_BOOL: return "bool";
         case TESS_EXPR_NULL: return "void*";
         case TESS_EXPR_IDENT: {
+            /* This is intentionally lightweight inference for declaration
+             * spelling; semantic analysis remains the source of type errors. */
             const char *cls = get_var_class(gen, expr->as.ident);
             if (cls && is_class_name(gen, cls)) return cls;
             if (cls && (strcmp(cls, "str") == 0 || strcmp(cls, "string") == 0))
@@ -233,6 +238,7 @@ static void forget_var_class(c99_codegen *gen, const char *name) {
     if (!gen || !name) return;
     for (size_t i = 0; i < gen->var_count; i++) {
         if (strcmp(gen->var_names[i], name) == 0) {
+            /* Swap-remove keeps updates O(1) after the lookup. */
             gen->var_names[i] = gen->var_names[gen->var_count - 1];
             gen->var_classes[i] = gen->var_classes[gen->var_count - 1];
             gen->var_count--;
@@ -593,6 +599,8 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             break;
         }
         case TESS_EXPR_ASSIGN: {
+            /* Assignment expressions are parenthesized by their surrounding
+             * C context when required by the AST's precedence. */
             c99_codegen_expr(gen, expr->as.assign.target);
             append_str(gen, " = ");
             c99_codegen_expr(gen, expr->as.assign.value);
@@ -938,6 +946,8 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                 /* Declare new bare variables on first assignment. */
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT) {
                     const char *name = stmt->as.assign.target->as.ident;
+                    /* A first assignment is a declaration; resetting this
+                     * set at branch boundaries preserves C block scope. */
                     if (!is_declared_var(gen, name) &&
                         !(gen->current_class && is_field_of_current_class(gen, name))) {
                         const char *class_type = construction_class(
@@ -1229,7 +1239,8 @@ static void c99_codegen_generate_function(c99_codegen *gen, tess_stmt *stmt) {
 
 static void c99_codegen_generate_functions(c99_codegen *gen,
                                             tess_program *program) {
-    /* Prototypes make forward calls safe. */
+    /* Emit every prototype before any body so declaration order in the source
+     * does not constrain calls or recursion. */
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
         if (!stmt || stmt->kind != TESS_STMT_FN) continue;
@@ -1257,7 +1268,8 @@ static void c99_codegen_generate_functions(c99_codegen *gen,
 
 static void c99_codegen_generate_class_init_helpers(c99_codegen *gen,
                                                      tess_program *program) {
-    /* Forward declarations for all generated method bodies. */
+    /* Init helpers call methods before their definitions, so publish every
+     * method signature first. */
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
         if (!stmt || stmt->kind != TESS_STMT_CLASS) continue;
@@ -1309,7 +1321,7 @@ static void c99_codegen_generate_class_init_helpers(c99_codegen *gen,
 static void c99_codegen_generate_classes(c99_codegen *gen, tess_program *program) {
     if (!gen || !program) return;
 
-    /* Methods may reference instances of classes declared later. */
+    /* Forward typedefs let fields and signatures refer to later classes. */
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
         if (stmt && stmt->kind == TESS_STMT_CLASS && stmt->as.class_decl)
@@ -1318,7 +1330,7 @@ static void c99_codegen_generate_classes(c99_codegen *gen, tess_program *program
                            stmt->as.class_decl->name);
     }
 
-    /* Methods may also call methods of classes defined further down. */
+    /* Method prototypes are needed before init helpers and method bodies. */
     append_str(gen, "\n");
 
     for (size_t i = 0; i < program->count; i++) {
@@ -1554,6 +1566,8 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
 
 static void c99_codegen_collect_modules(c99_codegen *gen, tess_program *program) {
     if (!gen || !gen->program) return;
+    /* Build alias lookup once; expression emission then stays independent of
+     * source declaration order. */
     gen->module_alias_count = 0;
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *st = program->items[i];
@@ -1568,6 +1582,8 @@ static void c99_codegen_collect_modules(c99_codegen *gen, tess_program *program)
 
 static char *c99_codegen_run(c99_codegen *gen, tess_program *program) {
     if (gen->module != NULL) {
+        /* Module mode deliberately emits declarations without a program main;
+         * the caller owns linking the resulting translation unit. */
         c99_codegen_print_runtime_info(gen);
         c99_codegen_generate_classes(gen, program);
         if (gen->failed || !ensure_capacity(gen, 1)) return NULL;
@@ -1585,8 +1601,8 @@ static char *c99_codegen_run(c99_codegen *gen, tess_program *program) {
     // Generate main function
     c99_codegen_generate_main(gen, program);
 
-    // Do not emit C that is known to be broken: an unsupported construct is a
-    // compile error, not a comment that silently produces a no-op program.
+    /* Never return partial output: callers must not mistake a stubbed
+     * expression for successfully generated code. */
     if (gen->failed) {
         return NULL;
     }

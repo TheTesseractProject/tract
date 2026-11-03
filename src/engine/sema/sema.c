@@ -46,7 +46,7 @@ typedef struct {
 typedef struct tess_scope {
     struct tess_scope *parent;
     bool in_method;           /* true -> return is allowed           */
-    bool in_function;
+    bool in_function;         /* inherited by nested blocks for return checks */
     sym_entry *table;
     size_t cap;               /* power of two, 0 when init failed    */
     size_t count;
@@ -311,6 +311,7 @@ static const char *module_table_find(tess_module_table *t, const char *alias) {
 static bool fn_table_add(tess_fn_table *t, const char *module, const char *name,
                         const char *ret_type, size_t param_count) {
     if (name == NULL) return false;
+    /* Names only collide within the same module namespace. */
     for (size_t i = 0; i < t->count; i++) {
         bool same_module = (module == NULL && t->items[i].module == NULL) ||
                            (module != NULL && t->items[i].module != NULL &&
@@ -1131,6 +1132,7 @@ static bool check_fn_call(tess_sema *s, tess_expr *callee, size_t argc,
                "wrong number of arguments to function");
         return false;
     }
+    /* Parameter types are not retained in this compact lookup table yet. */
     (void)args;
     return true;
 }
@@ -1290,6 +1292,8 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
         }
 
         case TESS_STMT_RETURN: {
+            /* Search enclosing scopes so returns remain valid inside nested
+             * blocks while top-level returns are rejected. */
             if (!s->scope->in_function) {
                 report(s, st->start, st->end,
                        "`return` outside a function or method body");
@@ -1454,6 +1458,8 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                 return false;
             }
             if (path != NULL) {
+                /* Parsing a path is useful for diagnostics/future linking,
+                 * but this implementation supports only built-in modules. */
                 report(s, st->start, st->end,
                        "file imports are not supported by this compiler yet");
                 return false;
@@ -1585,8 +1591,8 @@ bool tess_sema_check(tess_program *program, const char *src, const char *path) {
         module_table_add(&s.modules, native_modules[i], native_modules[i]);
     }
 
-    /* Pass 1: pre-declare all top-level class names so they can be referenced
-     * before their definition (forward declarations). */
+    /* Pass 1: pre-declare classes for forward type references. Functions are
+     * collected in a separate pass below for the same source-order freedom. */
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *st = program->items[i];
         if (st->kind == TESS_STMT_CLASS) {

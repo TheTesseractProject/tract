@@ -12,9 +12,6 @@
 #include "sema/sema.h"
 #include "constants.h"
 
-// Old deprecated API removed - use generate_c99_code_from_program instead
-// char* generate_c99_code(const char *source, size_t len, const char *path) { ... }
-
 char* generate_c99_code_from_program(tess_program *program, const char *path,
                                      bool quiet) {
     if (!program) return NULL;
@@ -94,14 +91,15 @@ bool engine_build_file(FILE *input_file, const char *input_path,
         MSGLN(WARNING_EMPTY_SOURCE);
     }
 
-    // Parse source code into AST with semantic analysis
+    /* tesseract_parse is the legacy empty-program shim; the current frontend
+     * is tess_parse, followed by an explicit semantic pass. */
     tess_program *program = tesseract_parse(buffer, file_size, input_path);
     if (!program) {
         cleanup_buffer(buffer);
         return false;
     }
     
-    // Re-run semantic analysis for non-empty source (tesseract_parse now just creates empty program)
+    /* Replace the shim program for non-empty input with the real AST. */
     if (file_size > 0) {
         program = tess_parse(buffer, file_size, input_path);
         if (!program) {

@@ -135,6 +135,8 @@ static bool vec_push(tess_parser *p, tess_vec *v, size_t elem,
         if (cap > SIZE_MAX / elem) {
             return fail_oom(p);
         }
+        /* Arena growth leaves prior arrays alive; that is safe because the
+         * whole AST is reclaimed together after parsing/compilation. */
         void *items = tess_arena_alloc(&p->program->arena, cap * elem);
         if (items == NULL) {
             return fail_oom(p);
@@ -888,7 +890,8 @@ static tess_stmt *parse_class(tess_parser *p) {
     tess_token name_tok = p->cur;
     advance(p);
     
-    // First LBRACE - beginning of class
+    /* At file scope, IDENT followed by `{` is the class declaration form;
+     * ordinary blocks begin with `{` directly. */
     if (!expect(p, TESS_TOK_LBRACE, "`{` after a class name")) {
         return NULL;
     }
@@ -1100,8 +1103,6 @@ static tess_stmt *parse_fn(tess_parser *p) {
         advance(p);
     }
 
-    /* This grammar currently defines imports/functions at file scope only. */
-
     tess_stmt *body = parse_block_body(p);
     if (body == NULL) return NULL;
     end = body->end;
@@ -1177,6 +1178,8 @@ tess_program *tess_parse(const char *src, size_t len, const char *path) {
     }
 
     tess_vec items = {0};
+    /* Top-level dispatch is explicit because class declarations, imports and
+     * functions have dedicated syntax that is not a regular statement. */
     while (!p.failed && p.cur.kind != TESS_TOK_EOF) {
         tess_stmt *stmt = NULL;
         if (p.cur.kind == TESS_TOK_KW_IMPORT) {
