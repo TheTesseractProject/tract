@@ -49,6 +49,8 @@ typedef struct {
     uint32_t end;
 } tess_class;
 
+typedef struct { char *name; tess_field *fields; size_t field_count; bool is_union; } tess_record;
+
 typedef enum {
     TESS_STMT_EMPTY,
     TESS_STMT_CLASS,
@@ -59,7 +61,13 @@ typedef enum {
     TESS_STMT_RETURN,
     TESS_STMT_BLOCK,
     TESS_STMT_IMPORT,
-    TESS_STMT_FN
+    TESS_STMT_FN,
+    TESS_STMT_FOR,
+    TESS_STMT_LINK,
+    TESS_STMT_BREAK,
+    TESS_STMT_CONTINUE
+    ,TESS_STMT_ASM
+    ,TESS_STMT_RECORD
 } tess_stmt_kind;
 
 struct tess_stmt {
@@ -71,6 +79,8 @@ struct tess_stmt {
         struct {
             tess_expr *target;
             tess_expr *value;
+            bool declaration; /* explicitly introduced with `let` */
+            char *declared_type;
         } assign;
         tess_expr *expr;
         struct {
@@ -98,7 +108,20 @@ struct tess_stmt {
             char *name;
             char *ret_type;
             tess_stmt *fn_body;
+            bool external; /* declaration provided by a C library */
+            bool variadic; /* C-style trailing `...` */
         } fn;
+        struct {
+            tess_stmt *init;
+            tess_expr *condition; /* NULL means an unconditional loop */
+            tess_expr *step;
+            tess_stmt *body;
+        } for_stmt;
+        struct {
+            char *library;
+        } link;
+        struct { char *text; bool is_volatile; } assembly;
+        tess_record *record_decl;
     } as;
 };
 
@@ -115,7 +138,11 @@ typedef enum {
     TESS_EXPR_ASSIGN,
     TESS_EXPR_BINARY,
     TESS_EXPR_UNARY,
-    TESS_EXPR_TERNARY
+    TESS_EXPR_TERNARY,
+    TESS_EXPR_INDEX
+    ,TESS_EXPR_ARRAY
+    ,TESS_EXPR_SLICE
+    ,TESS_EXPR_RECORD_INIT
 } tess_expr_kind;
 
 typedef enum {
@@ -141,7 +168,9 @@ typedef enum {
     TESS_UN_NEG,
     TESS_UN_POS,
     TESS_UN_NOT,
-    TESS_UN_BIT_NOT
+    TESS_UN_BIT_NOT,
+    TESS_UN_ADDRESS,
+    TESS_UN_DEREFERENCE
 } tess_unary_op;
 
 struct tess_expr {
@@ -185,6 +214,10 @@ struct tess_expr {
             tess_expr *then_expr;
             tess_expr *else_expr;
         } ternary;
+        struct { tess_expr *object; tess_expr *index; } index;
+        struct { tess_expr **items; size_t count; } array;
+        struct { tess_expr *object; tess_expr *start; tess_expr *end; } slice;
+        struct { char *type_name; char **names; tess_expr **values; size_t count; } record_init;
     } as;
 };
 

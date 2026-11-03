@@ -104,12 +104,17 @@ COLOR_BRIGHT_WHITE "Available options" COLOR_RESET "\n"\
 "-o, --output <path>     Write generated C to <path> (use '-' for stdout)\n"\
 "-c, --check             Parse and type-check only, do not generate C\n"\
 "    --stdout            Write generated C to standard output\n"\
+"    --compile           Build an executable with the system C compiler\n"\
+"    --cc <path>          Select the C compiler (requires --compile)\n"\
+"    --target <triple>    Cross-compile with the selected C compiler\n"\
+"    --freestanding       Emit a freestanding relocatable object (.o)\n"\
 "-q, --quiet             Suppress progress messages\n"\
 "    --                  Treat every following argument as a path\n\n"\
 \
 COLOR_BRIGHT_WHITE "Usage" COLOR_RESET "\n"\
 COLOR_GRAY "terra <path> [-o output.c]\n"\
 "terra --check <path>\n"\
+"terra --compile <path> [-o executable]\n"\
 "terra --version" COLOR_RESET "\n\n"
 
 #define TESSERACT_ANIMATION_END \

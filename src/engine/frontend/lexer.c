@@ -31,6 +31,16 @@ static tess_token_kind keyword_kind(const tess_lexer *lx, size_t start,
     if (lexeme_is(lx, start, end, "null")) return TESS_TOK_KW_NULL;
     if (lexeme_is(lx, start, end, "import")) return TESS_TOK_KW_IMPORT;
     if (lexeme_is(lx, start, end, "fn")) return TESS_TOK_KW_FN;
+    if (lexeme_is(lx, start, end, "let")) return TESS_TOK_KW_LET;
+    if (lexeme_is(lx, start, end, "for")) return TESS_TOK_KW_FOR;
+    if (lexeme_is(lx, start, end, "link")) return TESS_TOK_KW_LINK;
+    if (lexeme_is(lx, start, end, "break")) return TESS_TOK_KW_BREAK;
+    if (lexeme_is(lx, start, end, "continue")) return TESS_TOK_KW_CONTINUE;
+    if (lexeme_is(lx, start, end, "extern")) return TESS_TOK_KW_EXTERN;
+    if (lexeme_is(lx, start, end, "asm")) return TESS_TOK_KW_ASM;
+    if (lexeme_is(lx, start, end, "volatile")) return TESS_TOK_KW_VOLATILE;
+    if (lexeme_is(lx, start, end, "struct")) return TESS_TOK_KW_STRUCT;
+    if (lexeme_is(lx, start, end, "union")) return TESS_TOK_KW_UNION;
     return TESS_TOK_IDENT;
 }
 
@@ -199,6 +209,10 @@ bool tess_lexer_next(tess_lexer *lx, tess_token *out) {
 
     bool has_next = at + 1 < lx->len;
     unsigned char n = has_next ? (unsigned char)lx->src[at + 1] : 0;
+    if (c == '.' && at + 2 < lx->len && lx->src[at + 1] == '.' &&
+        lx->src[at + 2] == '.') {
+        return one(lx, out, TESS_TOK_ELLIPSIS, 3);
+    }
     switch (c) {
         case '@': return one(lx, out, TESS_TOK_AT, 1);
         case '.': return one(lx, out, TESS_TOK_DOT, 1);
@@ -209,6 +223,8 @@ bool tess_lexer_next(tess_lexer *lx, tess_token *out) {
         case ')': return one(lx, out, TESS_TOK_RPAREN, 1);
         case '{': return one(lx, out, TESS_TOK_LBRACE, 1);
         case '}': return one(lx, out, TESS_TOK_RBRACE, 1);
+        case '[': return one(lx, out, TESS_TOK_LBRACKET, 1);
+        case ']': return one(lx, out, TESS_TOK_RBRACKET, 1);
         case '?': return one(lx, out, TESS_TOK_QUESTION, 1);
         case '~': return one(lx, out, TESS_TOK_TILDE, 1);
         case '+': return one(lx, out, TESS_TOK_PLUS, 1);
@@ -262,6 +278,7 @@ const char *tess_token_kind_name(tess_token_kind kind) {
         case TESS_TOK_STRING: return "string";
         case TESS_TOK_AT: return "`@`";
         case TESS_TOK_DOT: return "`.`";
+        case TESS_TOK_ELLIPSIS: return "`...`";
         case TESS_TOK_COLON: return "`:`";
         case TESS_TOK_SEMI: return "`;`";
         case TESS_TOK_COMMA: return "`,`";
@@ -269,6 +286,10 @@ const char *tess_token_kind_name(tess_token_kind kind) {
         case TESS_TOK_RPAREN: return "`)`";
         case TESS_TOK_LBRACE: return "`{`";
         case TESS_TOK_RBRACE: return "`}`";
+        case TESS_TOK_LBRACKET: return "`[`";
+        case TESS_TOK_RBRACKET: return "`]`";
+        case TESS_TOK_KW_STRUCT: return "`struct`";
+        case TESS_TOK_KW_UNION: return "`union`";
         case TESS_TOK_QUESTION: return "`?`";
         case TESS_TOK_BANG: return "`!`";
         case TESS_TOK_EQ: return "`=`";
@@ -298,6 +319,14 @@ const char *tess_token_kind_name(tess_token_kind kind) {
         case TESS_TOK_KW_NULL: return "`null`";
         case TESS_TOK_KW_IMPORT: return "`import`";
         case TESS_TOK_KW_FN: return "`fn`";
+        case TESS_TOK_KW_LET: return "`let`";
+        case TESS_TOK_KW_FOR: return "`for`";
+        case TESS_TOK_KW_LINK: return "`link`";
+        case TESS_TOK_KW_BREAK: return "`break`";
+        case TESS_TOK_KW_CONTINUE: return "`continue`";
+        case TESS_TOK_KW_EXTERN: return "`extern`";
+        case TESS_TOK_KW_ASM: return "`asm`";
+        case TESS_TOK_KW_VOLATILE: return "`volatile`";
     }
     return "token";
 }

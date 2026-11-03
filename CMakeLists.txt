@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(terra VERSION 0.3.0 LANGUAGES C)
+project(terra VERSION 0.4.0 LANGUAGES C)
 
 # Set C standard
 set(CMAKE_C_STANDARD 23)
@@ -93,7 +93,8 @@ if(BUILD_TESTING)
     # End-to-end: compile a Tesseract example, build the generated C, run it.
     # The list covers the plain (.t) examples plus the .tes extension form.
     foreach(example class hello_world even_odd matrix_mult linked_classes
-                    math_demo test_example.tes)
+                    math_demo test_example.tes system_features record_abi
+                    multidim_array)
         if(example STREQUAL "class")
             set(example_expect "world")
         elseif(example STREQUAL "hello_world")
@@ -106,6 +107,12 @@ if(BUILD_TESTING)
             set(example_expect "sqrt(9)")
         elseif(example STREQUAL "test_example.tes")
             set(example_expect "10")
+        elseif(example STREQUAL "system_features")
+            set(example_expect "3")
+        elseif(example STREQUAL "record_abi")
+            set(example_expect "62")
+        elseif(example STREQUAL "multidim_array")
+            set(example_expect "9")
         else()
             set(example_expect "Product")
         endif()

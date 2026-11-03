@@ -4,5 +4,5 @@ HelloWorld {
     }
 }
 
-hw = HelloWorld.new;
+let hw = HelloWorld.new;
 hw.run;

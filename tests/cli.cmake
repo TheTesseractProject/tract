@@ -85,7 +85,7 @@ set(WORK "${CMAKE_CURRENT_BINARY_DIR}/cli_work")
 # The accepted extensions (.t, .tes, .tt) all pass --check.
 foreach(ext t tes tt)
     string(REPLACE "." "_" ext_var "${ext}")
-    set(alt_source "${WORK}/ext_${ext_var}${ext}")
+    set(alt_source "${WORK}/ext_${ext_var}.${ext}")
     configure_file("${SOURCE}" "${alt_source}" COPYONLY)
     execute_process(COMMAND "${TERRA}" --check "${alt_source}"
         RESULT_VARIABLE ext_result
@@ -121,7 +121,8 @@ execute_process(COMMAND "${TERRA}" "${SOURCE}" --stdout
 if(NOT noisy_result EQUAL 0)
     message(FATAL_ERROR "plain --stdout failed:\n${noisy_out}\n${noisy_err}")
 endif()
-if(NOT noisy_out MATCHES "^/\* Terra Runtime Library \*/")
+string(FIND "${noisy_out}" "/* Terra Runtime Library */" runtime_prelude_pos)
+if(NOT runtime_prelude_pos EQUAL 0)
     message(FATAL_ERROR "--stdout output starts with progress text, not C:\n${noisy_out}")
 endif()
 if(noisy_err STREQUAL "")

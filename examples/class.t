@@ -12,7 +12,7 @@ TestClass {
     }
 }
 
-t = TestClass.new;
+let t = TestClass.new;
 t.b = "world";
 t.c;
 t.show("> ");

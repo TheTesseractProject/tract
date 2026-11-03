@@ -11,6 +11,6 @@ Test {
     }
 }
 
-t = Test.new;
+let t = Test.new;
 t.value = 5;
 put(t.double_value);

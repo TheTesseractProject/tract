@@ -55,13 +55,49 @@ Rules of the queue:
 | **0.0.1** | Lexer + Parser + Sema, CLI, demo examples | 🟢 Released |
 | **0.0.2** | Error diagnostics with location info, test suite foundation | 🟢 Released |
 | **0.1** | AST optimization passes, initial C99 codegen | 🟢 Released |
-| **0.3.0 (Current)** | Complete C99 code generation, modular backend architecture, language syntax updates | 🏗️ In Progress |
+| **0.3.0** | C99 code generation, modular backend architecture, language syntax updates | ✅ Complete |
+| **0.4.0 (Current)** | Native C headers, clearer declarations, application-oriented control flow and executable builds | 🏗️ In Progress |
 
 ---
 
 ## 📅 Development Phases (0.4 → 1.0)
 
 Each phase builds upon the previous one while maintaining API/ABI stability.
+
+### Native C and application support (active direction)
+
+- [x] Import validated system headers with `import "header.h" as alias`.
+- [x] Declare typed C functions with `extern fn`, including C-style variadic
+  signatures and opaque C typedefs, then emit prototypes for the C compiler to
+  validate.
+- [x] Add explicit `let name = value;` declarations while retaining assignment
+  based declarations for existing programs.
+- [x] Add a typed Tesseract `fn main()` application entry point while retaining
+  top-level script execution for examples and quick programs.
+- [x] Add scoped C-style `for (init; condition; step)` loops.
+- [x] Add loop-scoped `break;` and `continue;` with semantic validation.
+- [x] Add top-level `link "library";` metadata and a shell-free executable
+  build mode that passes library names to the C linker.
+- [ ] Add typed `extern` declarations for C APIs that do not provide headers or
+  need narrower language-level types.
+- [ ] Expand application primitives (collections, iteration, modules, and a
+  stable runtime API) based on small real programs and examples.
+
+### Freestanding and operating-system work (required before a Linux 1.0 port)
+
+The compiler now has a source-to-object freestanding path for runtime-free
+programs. It still does not link a kernel or produce a bootable image.
+
+- [x] Fixed-size arrays, typed slices, indexing, pointer arithmetic, and
+  explicit address/dereference operations.
+- [x] C ABI `struct`/`union` layout and `volatile` qualified types.
+- [x] Freestanding object mode without hosted runtime includes or link steps;
+  programs that require Terra's hosted helpers are rejected in this mode.
+- [x] Target triple forwarding and GNU-style inline assembly templates.
+- [ ] Complete function-pointer types, calling-convention attributes,
+  assembly constraints/intrinsics, linker scripts, and reproducible boot-image
+  builds.
+- [ ] Architecture-specific integration tests and boot tests in an emulator.
 
 ---
 
@@ -339,7 +375,7 @@ Memory management and standard functions:
 
 ---
 
-### Phase 3: Version 0.4 — Optimizations & Performance
+### Phase 3: Version 0.5 — Optimizations & Performance
 
 #### 🎯 Objectives
 

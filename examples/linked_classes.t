@@ -27,6 +27,6 @@ Box {
     }
 }
 
-b = Box.init(21);
-h = Holder.init(b);
+let b = Box.init(21);
+let h = Holder.init(b);
 h.reveal;

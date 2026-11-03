@@ -38,6 +38,10 @@ int main(int argc, char *argv[]) {
                 .check_only = cmd_result.check_only,
                 .to_stdout = cmd_result.to_stdout,
                 .quiet = cmd_result.quiet,
+                .compile = cmd_result.compile,
+                .c_compiler = cmd_result.c_compiler,
+                .target_triple = cmd_result.target_triple,
+                .freestanding = cmd_result.freestanding,
             };
             bool build_success = engine_build_file(input_file, cmd_result.path,
                                                    cmd_result.output, &options);

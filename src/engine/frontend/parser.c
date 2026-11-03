@@ -37,7 +37,7 @@ typedef struct {
 static tess_stmt *parse_statement(tess_parser *p);
 static tess_stmt *parse_statement_impl(tess_parser *p);
 static tess_stmt *parse_import(tess_parser *p);
-static tess_stmt *parse_fn(tess_parser *p);
+static tess_stmt *parse_fn(tess_parser *p, bool external);
 
 static bool fail_at(tess_parser *p, const char *message, size_t start,
                     size_t end) {
@@ -205,6 +205,59 @@ static char *copy_ident(tess_parser *p, tess_token tok) {
     return name;
 }
 
+static char *parse_type_name(tess_parser *p, const char *message) {
+    bool is_volatile = p->cur.kind == TESS_TOK_KW_VOLATILE;
+    if (is_volatile) advance(p);
+    if (p->cur.kind != TESS_TOK_IDENT) {
+        fail_at(p, message, p->cur.start, p->cur.end);
+        return NULL;
+    }
+    char *base = copy_ident(p, p->cur);
+    if (base == NULL) return NULL;
+    advance(p);
+    size_t n = strlen(base), cap = n + 128;
+    char *type = tess_arena_alloc(&p->program->arena, cap);
+    if (type == NULL) { fail_oom(p); return NULL; }
+    memcpy(type, base, n + 1);
+    while (p->cur.kind == TESS_TOK_STAR) {
+        if (n + 2 >= cap) return fail_oom(p), NULL;
+        type[n++] = '*'; type[n] = '\0'; advance(p);
+    }
+    bool slice_parameter = false;
+    while (p->cur.kind == TESS_TOK_LBRACKET) {
+        advance(p);
+        if (strcmp(base, "slice") == 0 && !slice_parameter && p->cur.kind == TESS_TOK_IDENT) {
+            slice_parameter = true;
+            char *element = copy_ident(p, p->cur);
+            if (element == NULL) return NULL;
+            advance(p);
+            if (!expect(p, TESS_TOK_RBRACKET, "`]` after slice element type")) return NULL;
+            size_t en = strlen(element);
+            if (n + en + 8 >= cap) return fail_oom(p), NULL;
+            type[n++] = '['; memcpy(type + n, element, en); n += en;
+            type[n++] = ']'; type[n] = '\0';
+        } else {
+            size_t begin = p->cur.start;
+            if (p->cur.kind != TESS_TOK_INT) {
+                fail_at(p, "fixed array type needs a constant length", p->cur.start, p->cur.end);
+                return NULL;
+            }
+            size_t end = p->cur.end;
+            advance(p);
+            if (!expect(p, TESS_TOK_RBRACKET, "`]` after array length")) return NULL;
+            size_t dim_len = end - begin;
+            if (n + dim_len + 3 >= cap) return fail_oom(p), NULL;
+            type[n++] = '['; memcpy(type + n, p->src + begin, dim_len); n += dim_len;
+            type[n++] = ']'; type[n] = '\0';
+        }
+    }
+    if (is_volatile) {
+        if (n + 10 >= cap) return fail_oom(p), NULL;
+        memmove(type + 9, type, n + 1); memcpy(type, "volatile ", 9);
+    }
+    return type;
+}
+
 static bool is_hex(unsigned char c) {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
            (c >= 'A' && c <= 'F');
@@ -357,6 +410,33 @@ static tess_expr *parse_primary(tess_parser *p) {
                 return NULL;
             }
             e->as.ident = name;
+            if (p->cur.kind == TESS_TOK_LBRACE) {
+                advance(p);
+                tess_vec names = {0}, values = {0};
+                while (p->cur.kind != TESS_TOK_RBRACE && p->cur.kind != TESS_TOK_EOF) {
+                    if (p->cur.kind != TESS_TOK_IDENT) {
+                        fail_at(p, "expected a record field name", p->cur.start, p->cur.end);
+                        return NULL;
+                    }
+                    char *field = copy_ident(p, p->cur);
+                    advance(p);
+                    if (!expect(p, TESS_TOK_COLON, "`:` after record field name")) return NULL;
+                    tess_expr *value = parse_expr(p);
+                    if (!value || !vec_push(p, &names, sizeof field, &field) ||
+                        !vec_push(p, &values, sizeof value, &value)) return NULL;
+                    if (p->cur.kind != TESS_TOK_COMMA) break;
+                    advance(p);
+                }
+                uint32_t end = (uint32_t)p->cur.end;
+                if (!expect(p, TESS_TOK_RBRACE, "`}` after record initializer")) return NULL;
+                tess_expr *init = new_expr(p, TESS_EXPR_RECORD_INIT, e->start, end);
+                if (init == NULL) return NULL;
+                init->as.record_init.type_name = name;
+                init->as.record_init.names = names.items;
+                init->as.record_init.values = values.items;
+                init->as.record_init.count = names.count;
+                return init;
+            }
             return e;
         }
         case TESS_TOK_INT: {
@@ -455,6 +535,28 @@ static tess_expr *parse_primary(tess_parser *p) {
             e->end = end;
             return e;
         }
+        case TESS_TOK_LBRACKET: {
+            tess_vec items = {0};
+            uint32_t start = (uint32_t)tok.start;
+            advance(p);
+            while (p->cur.kind != TESS_TOK_RBRACKET && p->cur.kind != TESS_TOK_EOF) {
+                tess_expr *item = parse_expr(p);
+                if (item == NULL || !vec_push(p, &items, sizeof item, &item)) return NULL;
+                if (p->cur.kind != TESS_TOK_COMMA) break;
+                advance(p);
+            }
+            uint32_t end = (uint32_t)p->cur.end;
+            if (!expect(p, TESS_TOK_RBRACKET, "`]` after array literal")) return NULL;
+            if (items.count == 0) {
+                fail_at(p, "array literal cannot be empty", start, end);
+                return NULL;
+            }
+            tess_expr *e = new_expr(p, TESS_EXPR_ARRAY, start, end);
+            if (e == NULL) return NULL;
+            e->as.array.items = items.items;
+            e->as.array.count = items.count;
+            return e;
+        }
         default:
             fail_at(p, "expected an expression", tok.start, tok.end);
             return NULL;
@@ -503,6 +605,25 @@ static tess_expr *parse_postfix(tess_parser *p) {
             call->as.call.args = args;
             call->as.call.arg_count = argc;
             e = call;
+        } else if (p->cur.kind == TESS_TOK_LBRACKET) {
+            advance(p);
+            tess_expr *first = NULL;
+            if (p->cur.kind != TESS_TOK_COLON) first = parse_expr(p);
+            if (p->cur.kind == TESS_TOK_COLON) {
+                advance(p);
+                tess_expr *last = p->cur.kind == TESS_TOK_RBRACKET ? NULL : parse_expr(p);
+                if (!expect(p, TESS_TOK_RBRACKET, "`]` after slice")) return NULL;
+                tess_expr *sub = new_expr(p, TESS_EXPR_SLICE, e->start, (uint32_t)p->cur.end);
+                if (sub == NULL) return NULL;
+                sub->as.slice.object = e; sub->as.slice.start = first; sub->as.slice.end = last;
+                e = sub;
+                continue;
+            }
+            if (first == NULL || !expect(p, TESS_TOK_RBRACKET, "`]` after the index")) return NULL;
+            tess_expr *sub = new_expr(p, TESS_EXPR_INDEX, e->start, first->end);
+            if (sub == NULL) return NULL;
+            sub->as.index.object = e; sub->as.index.index = first;
+            e = sub;
         } else {
             break;
         }
@@ -531,6 +652,8 @@ static tess_expr *parse_unary_impl(tess_parser *p) {
         case TESS_TOK_MINUS: op = TESS_UN_NEG; break;
         case TESS_TOK_PLUS: op = TESS_UN_POS; break;
         case TESS_TOK_TILDE: op = TESS_UN_BIT_NOT; break;
+        case TESS_TOK_AMP: op = TESS_UN_ADDRESS; break;
+        case TESS_TOK_STAR: op = TESS_UN_DEREFERENCE; break;
         default: return parse_postfix(p);
     }
     uint32_t start = (uint32_t)p->cur.start;
@@ -699,6 +822,27 @@ static tess_stmt *parse_block_body(tess_parser *p) {
 }
 
 static tess_stmt *parse_statement_impl(tess_parser *p) {
+    if (p->cur.kind == TESS_TOK_KW_ASM) {
+        uint32_t start = (uint32_t)p->cur.start;
+        advance(p);
+        bool is_volatile = false;
+        if (p->cur.kind == TESS_TOK_KW_VOLATILE) { is_volatile = true; advance(p); }
+        if (!expect(p, TESS_TOK_LPAREN, "`(` after asm")) return NULL;
+        if (p->cur.kind != TESS_TOK_STRING) {
+            fail_at(p, "asm currently requires one string template", p->cur.start, p->cur.end);
+            return NULL;
+        }
+        size_t n = 0;
+        char *text = unescape_string(p, p->cur, &n);
+        if (text == NULL) return NULL;
+        uint32_t end = (uint32_t)p->cur.end;
+        advance(p);
+        if (!expect(p, TESS_TOK_RPAREN, "`)` after asm template") ||
+            !expect(p, TESS_TOK_SEMI, "`;` after asm")) return NULL;
+        tess_stmt *stmt = new_stmt(p, TESS_STMT_ASM, start, end);
+        if (stmt != NULL) { stmt->as.assembly.text = text; stmt->as.assembly.is_volatile = is_volatile; }
+        return stmt;
+    }
     if (p->cur.kind == TESS_TOK_SEMI) {
         uint32_t start = (uint32_t)p->cur.start;
         uint32_t end = (uint32_t)p->cur.end;
@@ -707,6 +851,33 @@ static tess_stmt *parse_statement_impl(tess_parser *p) {
     }
     if (p->cur.kind == TESS_TOK_LBRACE) {
         return parse_block_body(p);
+    }
+    if (p->cur.kind == TESS_TOK_KW_LINK) {
+        uint32_t start = (uint32_t)p->cur.start;
+        advance(p);
+        if (p->cur.kind != TESS_TOK_STRING) {
+            fail_at(p, "expected a library name after `link`",
+                    p->cur.start, p->cur.end);
+            return NULL;
+        }
+        size_t len = 0;
+        char *library = unescape_string(p, p->cur, &len);
+        if (library == NULL) return NULL;
+        if (strlen(library) != len) {
+            fail_at(p, "library name cannot contain a NUL byte",
+                    p->cur.start, p->cur.end);
+            return NULL;
+        }
+        advance(p);
+        uint32_t end = (uint32_t)p->cur.end;
+        if (p->cur.kind == TESS_TOK_SEMI) {
+            end = (uint32_t)p->cur.end;
+            advance(p);
+        }
+        tess_stmt *stmt = new_stmt(p, TESS_STMT_LINK, start, end);
+        if (stmt == NULL) return NULL;
+        stmt->as.link.library = library;
+        return stmt;
     }
     if (p->cur.kind == TESS_TOK_KW_IF) {
         uint32_t start = (uint32_t)p->cur.start;
@@ -768,6 +939,49 @@ static tess_stmt *parse_statement_impl(tess_parser *p) {
         stmt->as.while_stmt.body = body;
         return stmt;
     }
+    if (p->cur.kind == TESS_TOK_KW_FOR) {
+        uint32_t start = (uint32_t)p->cur.start;
+        advance(p);
+        if (!expect(p, TESS_TOK_LPAREN, "`(` after `for`")) return NULL;
+
+        /* The initializer reuses normal declaration/assignment syntax and
+         * consumes its terminating semicolon. An empty one is legal. */
+        tess_stmt *init = parse_statement(p);
+        if (init == NULL) return NULL;
+
+        tess_expr *condition = NULL;
+        if (p->cur.kind != TESS_TOK_SEMI) {
+            condition = parse_expr(p);
+            if (condition == NULL) return NULL;
+        }
+        if (!expect(p, TESS_TOK_SEMI, "`;` after the for condition"))
+            return NULL;
+
+        tess_expr *step = NULL;
+        if (p->cur.kind != TESS_TOK_RPAREN) {
+            tess_expr *target = parse_expr(p);
+            if (target == NULL) return NULL;
+            if (!expect(p, TESS_TOK_EQ, "`=` in the for step")) return NULL;
+            tess_expr *value = parse_expr(p);
+            if (value == NULL) return NULL;
+            step = new_expr(p, TESS_EXPR_ASSIGN, target->start, value->end);
+            if (step == NULL) return NULL;
+            step->as.assign.target = target;
+            step->as.assign.value = value;
+        }
+        if (!expect(p, TESS_TOK_RPAREN, "`)` after the for clauses"))
+            return NULL;
+        tess_stmt *body = parse_statement(p);
+        if (body == NULL) return NULL;
+
+        tess_stmt *stmt = new_stmt(p, TESS_STMT_FOR, start, body->end);
+        if (stmt == NULL) return NULL;
+        stmt->as.for_stmt.init = init;
+        stmt->as.for_stmt.condition = condition;
+        stmt->as.for_stmt.step = step;
+        stmt->as.for_stmt.body = body;
+        return stmt;
+    }
     if (p->cur.kind == TESS_TOK_KW_RETURN) {
         uint32_t start = (uint32_t)p->cur.start;
         advance(p);
@@ -789,13 +1003,39 @@ static tess_stmt *parse_statement_impl(tess_parser *p) {
         stmt->as.ret = value;
         return stmt;
     }
+    if (p->cur.kind == TESS_TOK_KW_BREAK ||
+        p->cur.kind == TESS_TOK_KW_CONTINUE) {
+        bool is_break = p->cur.kind == TESS_TOK_KW_BREAK;
+        uint32_t start = (uint32_t)p->cur.start;
+        advance(p);
+        uint32_t end = (uint32_t)p->cur.end;
+        if (!expect(p, TESS_TOK_SEMI, "`;` after the loop control statement"))
+            return NULL;
+        tess_stmt *stmt = new_stmt(p, is_break ? TESS_STMT_BREAK
+                                              : TESS_STMT_CONTINUE,
+                                  start, end);
+        return stmt;
+    }
 
+    bool declaration = p->cur.kind == TESS_TOK_KW_LET;
+    if (declaration) advance(p);
     tess_expr *first = parse_expr(p);
     if (first == NULL) {
         return NULL;
     }
+    if (declaration && first->kind != TESS_EXPR_IDENT) {
+        fail_at(p, "`let` must introduce a variable name", first->start,
+                first->end);
+        return NULL;
+    }
+    char *declared_type = NULL;
+    if (declaration && p->cur.kind == TESS_TOK_COLON) {
+        advance(p);
+        declared_type = parse_type_name(p, "expected a type after `:`");
+        if (declared_type == NULL) return NULL;
+    }
     if (p->cur.kind == TESS_TOK_EQ) {
-        if (first->kind != TESS_EXPR_IDENT && first->kind != TESS_EXPR_MEMBER) {
+        if (first->kind != TESS_EXPR_IDENT && first->kind != TESS_EXPR_MEMBER && first->kind != TESS_EXPR_INDEX && !(first->kind == TESS_EXPR_UNARY && first->as.unary.op == TESS_UN_DEREFERENCE)) {
             fail_at(p, "invalid assignment target", first->start, first->end);
             return NULL;
         }
@@ -813,7 +1053,14 @@ static tess_stmt *parse_statement_impl(tess_parser *p) {
         }
         stmt->as.assign.target = first;
         stmt->as.assign.value = value;
+        stmt->as.assign.declaration = declaration;
+        stmt->as.assign.declared_type = declared_type;
         return stmt;
+    }
+    if (declaration) {
+        fail_at(p, "expected `=` after the variable name", p->cur.start,
+                p->cur.end);
+        return NULL;
     }
     if (!expect(p, TESS_TOK_SEMI, "`;` after an expression")) {
         return NULL;
@@ -832,22 +1079,16 @@ static bool parse_field(tess_parser *p, tess_vec *fields) {
     if (!expect(p, TESS_TOK_COLON, "`:` after a field name")) {
         return false;
     }
-    if (p->cur.kind != TESS_TOK_IDENT) {
-        return fail_at(p, "expected a type name", p->cur.start, p->cur.end);
-    }
-    tess_token type_tok = p->cur;
-    advance(p);
+    char *type_name = parse_type_name(p, "expected a type name");
+    if (type_name == NULL) return false;
     tess_field field = {0};
     field.name = copy_ident(p, name_tok);
     if (field.name == NULL) {
         return false;
     }
-    field.type = copy_ident(p, type_tok);
-    if (field.type == NULL) {
-        return false;
-    }
+    field.type = type_name;
     field.start = (uint32_t)name_tok.start;
-    field.end = (uint32_t)type_tok.end;
+    field.end = (uint32_t)p->cur.start;
     if (!expect(p, TESS_TOK_SEMI, "`;` after a field declaration")) {
         return false;
     }
@@ -873,22 +1114,14 @@ static bool parse_method(tess_parser *p, tess_vec *methods) {
                             "`:` after a parameter name")) {
                     return false;
                 }
-                if (p->cur.kind != TESS_TOK_IDENT) {
-                    fail_at(p, "expected a type name", p->cur.start,
-                            p->cur.end);
-                    return false;
-                }
-                tess_token param_type = p->cur;
-                advance(p);
+                char *param_type = parse_type_name(p, "expected a type name");
+                if (param_type == NULL) return false;
                 tess_param param = {0};
                 param.name = copy_ident(p, param_name);
                 if (param.name == NULL) {
                     return false;
                 }
-                param.type = copy_ident(p, param_type);
-                if (param.type == NULL) {
-                    return false;
-                }
+                param.type = param_type;
                 if (!vec_push(p, &params, sizeof param, &param)) {
                     return false;
                 }
@@ -906,16 +1139,8 @@ static bool parse_method(tess_parser *p, tess_vec *methods) {
     char *ret_type = NULL;
     if (p->cur.kind == TESS_TOK_COLON) {
         advance(p);
-        if (p->cur.kind != TESS_TOK_IDENT) {
-            fail_at(p, "expected a return type after `:`", p->cur.start,
-                    p->cur.end);
-            return false;
-        }
-        ret_type = copy_ident(p, p->cur);
-        if (ret_type == NULL) {
-            return false;
-        }
-        advance(p);
+        ret_type = parse_type_name(p, "expected a return type after `:`");
+        if (ret_type == NULL) return false;
     }
 
     tess_stmt *body = parse_block_body(p);
@@ -965,7 +1190,9 @@ static tess_stmt *parse_class(tess_parser *p) {
         
         // Check next token
         if (p->next.kind == TESS_TOK_COLON &&
-            peek_kind_ahead(p, 2) == TESS_TOK_LBRACE) {
+            (peek_kind_ahead(p, 2) == TESS_TOK_LBRACE ||
+             (peek_kind_ahead(p, 2) == TESS_TOK_KW_VOLATILE &&
+              peek_kind_ahead(p, 3) == TESS_TOK_LBRACE))) {
             // `name: Type { ... }` is a method with a return type; a field
             // would be terminated by `;` right after the type.
             if (!parse_method(p, &methods)) {
@@ -1020,6 +1247,33 @@ static tess_stmt *parse_class(tess_parser *p) {
     return stmt;
 }
 
+static tess_stmt *parse_record(tess_parser *p) {
+    bool is_union = p->cur.kind == TESS_TOK_KW_UNION;
+    uint32_t start = (uint32_t)p->cur.start;
+    advance(p);
+    if (p->cur.kind != TESS_TOK_IDENT) {
+        fail_at(p, "expected a record name", p->cur.start, p->cur.end);
+        return NULL;
+    }
+    char *name = copy_ident(p, p->cur);
+    advance(p);
+    if (!expect(p, TESS_TOK_LBRACE, "`{` after record name")) return NULL;
+    tess_vec fields = {0};
+    while (!p->failed && p->cur.kind != TESS_TOK_RBRACE && p->cur.kind != TESS_TOK_EOF) {
+        if (p->cur.kind == TESS_TOK_SEMI) { advance(p); continue; }
+        if (p->cur.kind != TESS_TOK_IDENT || !parse_field(p, &fields)) return NULL;
+    }
+    uint32_t end = (uint32_t)p->cur.end;
+    if (!expect(p, TESS_TOK_RBRACE, "`}` after record fields")) return NULL;
+    tess_record *record = tess_arena_alloc(&p->program->arena, sizeof *record);
+    if (!record) { fail_oom(p); return NULL; }
+    record->name = name; record->fields = fields.items;
+    record->field_count = fields.count; record->is_union = is_union;
+    tess_stmt *stmt = new_stmt(p, TESS_STMT_RECORD, start, end);
+    if (stmt) stmt->as.record_decl = record;
+    return stmt;
+}
+
 static bool ident_is_word(tess_parser *p, const char *word) {
     size_t n = strlen(word);
     return p->cur.kind == TESS_TOK_IDENT &&
@@ -1044,10 +1298,29 @@ static tess_stmt *parse_import(tess_parser *p) {
         stmt->as.import.module = name;
         stmt->as.import.alias = name;
         advance(p);
+        /* Native C modules may attach one system header. `import c
+         * "stdio.h" as io` gives calls through `io` a C namespace while the
+         * header supplies the declarations to the generated translation unit. */
+        if (strcmp(name, "c") == 0 && p->cur.kind == TESS_TOK_STRING) {
+            size_t header_len = 0;
+            stmt->as.import.path = unescape_string(p, p->cur, &header_len);
+            if (stmt->as.import.path == NULL) return NULL;
+            if (strlen(stmt->as.import.path) != header_len) {
+                fail_at(p, "C header name cannot contain a NUL byte",
+                        p->cur.start, p->cur.end);
+                return NULL;
+            }
+            advance(p);
+        }
     } else if (p->cur.kind == TESS_TOK_STRING) {
         size_t len = 0;
         char *path = unescape_string(p, p->cur, &len);
         if (path == NULL) return NULL;
+        if (strlen(path) != len) {
+            fail_at(p, "import path cannot contain a NUL byte",
+                    p->cur.start, p->cur.end);
+            return NULL;
+        }
         size_t n = len;
         while (n > 0 && (path[n - 1] == '.' || path[n - 1] == '/')) {
             n--;
@@ -1058,6 +1331,14 @@ static tess_stmt *parse_import(tess_parser *p) {
         }
         size_t base = slash < n ? slash + 1 : 0;
         size_t blen = n - base;
+        bool c_header = blen > 2 && path[blen + base - 2] == '.' &&
+                        path[blen + base - 1] == 'h';
+        if (c_header) {
+            stmt->as.import.module = tess_arena_strndup(
+                &p->program->arena, "c", 1);
+            if (stmt->as.import.module == NULL) return fail_oom(p), NULL;
+            blen -= 2;
+        }
         char *alias = tess_arena_alloc(&p->program->arena, blen + 1);
         if (alias == NULL) return NULL;
         memcpy(alias, path + base, blen);
@@ -1093,9 +1374,17 @@ static tess_stmt *parse_import(tess_parser *p) {
     return stmt;
 }
 
-static tess_stmt *parse_fn(tess_parser *p) {
+static tess_stmt *parse_fn(tess_parser *p, bool external) {
     uint32_t start = (uint32_t)p->cur.start;
     uint32_t end = (uint32_t)p->cur.end;
+    if (external) {
+        advance(p); /* `extern` */
+        if (p->cur.kind != TESS_TOK_KW_FN) {
+            fail_at(p, "expected `fn` after `extern`", p->cur.start,
+                    p->cur.end);
+            return NULL;
+        }
+    }
     advance(p); /* `fn` */
 
     /* Function position in the source is its keyword, with the full span
@@ -1113,8 +1402,24 @@ static tess_stmt *parse_fn(tess_parser *p) {
     if (!expect(p, TESS_TOK_LPAREN, "`(` after the function name")) return NULL;
 
     tess_vec params = {0};
+    bool variadic = false;
     if (p->cur.kind != TESS_TOK_RPAREN) {
         for (;;) {
+            if (p->cur.kind == TESS_TOK_ELLIPSIS) {
+                if (!external || params.count == 0) {
+                    fail_at(p, "variadic parameters require an extern function and at least one fixed parameter",
+                            p->cur.start, p->cur.end);
+                    return NULL;
+                }
+                variadic = true;
+                advance(p);
+                if (p->cur.kind != TESS_TOK_RPAREN) {
+                    fail_at(p, "`...` must be the final parameter",
+                            p->cur.start, p->cur.end);
+                    return NULL;
+                }
+                break;
+            }
             if (p->cur.kind != TESS_TOK_IDENT) {
                 fail_at(p, "expected a parameter name", p->cur.start, p->cur.end);
                 return NULL;
@@ -1122,17 +1427,12 @@ static tess_stmt *parse_fn(tess_parser *p) {
             tess_token param_name = p->cur;
             advance(p);
             if (!expect(p, TESS_TOK_COLON, "`:` after a parameter name")) return NULL;
-            if (p->cur.kind != TESS_TOK_IDENT) {
-                fail_at(p, "expected a parameter type", p->cur.start, p->cur.end);
-                return NULL;
-            }
-            tess_token param_type = p->cur;
-            advance(p);
+            char *param_type = parse_type_name(p, "expected a parameter type");
+            if (param_type == NULL) return NULL;
             tess_param param = {0};
             param.name = copy_ident(p, param_name);
             if (param.name == NULL) return NULL;
-            param.type = copy_ident(p, param_type);
-            if (param.type == NULL) return NULL;
+            param.type = param_type;
             if (!vec_push(p, &params, sizeof param, &param)) return NULL;
             if (p->cur.kind == TESS_TOK_COMMA) {
                 advance(p);
@@ -1151,18 +1451,22 @@ static tess_stmt *parse_fn(tess_parser *p) {
     char *ret_type = NULL;
     if (p->cur.kind == TESS_TOK_COLON) {
         advance(p);
-        if (p->cur.kind != TESS_TOK_IDENT) {
-            fail_at(p, "expected a return type after `:`", p->cur.start, p->cur.end);
-            return NULL;
-        }
-        ret_type = copy_ident(p, p->cur);
+        ret_type = parse_type_name(p, "expected a return type after `:`");
         if (ret_type == NULL) return NULL;
-        advance(p);
+        /* C's explicit `void` return is the language's no-value return. */
+        if (external && strcmp(ret_type, "void") == 0) ret_type = NULL;
     }
 
-    tess_stmt *body = parse_block_body(p);
-    if (body == NULL) return NULL;
-    end = body->end;
+    tess_stmt *body = NULL;
+    if (external) {
+        end = (uint32_t)p->cur.end;
+        if (!expect(p, TESS_TOK_SEMI, "`;` after an extern declaration"))
+            return NULL;
+    } else {
+        body = parse_block_body(p);
+        if (body == NULL) return NULL;
+        end = body->end;
+    }
 
     tess_stmt *stmt = new_stmt(p, TESS_STMT_FN, start, end);
     if (stmt == NULL) return NULL;
@@ -1171,6 +1475,8 @@ static tess_stmt *parse_fn(tess_parser *p) {
     stmt->as.fn.name = name;
     stmt->as.fn.ret_type = ret_type;
     stmt->as.fn.fn_body = body;
+    stmt->as.fn.external = external;
+    stmt->as.fn.variadic = variadic;
     return stmt;
 }
 
@@ -1242,7 +1548,11 @@ tess_program *tess_parse(const char *src, size_t len, const char *path) {
         if (p.cur.kind == TESS_TOK_KW_IMPORT) {
             stmt = parse_import(&p);
         } else if (p.cur.kind == TESS_TOK_KW_FN) {
-            stmt = parse_fn(&p);
+            stmt = parse_fn(&p, false);
+        } else if (p.cur.kind == TESS_TOK_KW_EXTERN) {
+            stmt = parse_fn(&p, true);
+        } else if (p.cur.kind == TESS_TOK_KW_STRUCT || p.cur.kind == TESS_TOK_KW_UNION) {
+            stmt = parse_record(&p);
         } else {
             bool is_class = p.cur.kind == TESS_TOK_IDENT &&
                             p.next.kind == TESS_TOK_LBRACE;

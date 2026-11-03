@@ -43,8 +43,29 @@ Hello there!
 - A field whose type is a user-defined class is a pointer to an instance, so a
   class may reference another class declared later in the same file.
 - Methods can be called with or without parentheses (`obj.run;` is `obj.run()`).
+- `let name = value;` explicitly declares a variable. Existing assignment syntax
+  remains available for updates and backwards compatibility.
+- `fn main() { ... }` is the application entry point. A program without it keeps
+  script-style top-level execution.
+- C-style `for` loops accept declarations, conditions, and assignment steps:
+  `for (let i = 0; i < limit; i = i + 1) { ... }`; `break;` and `continue;`
+  work inside both `for` and `while` loops.
+- Top-level `link "library";` adds a native linker dependency when using
+  `--compile` (for example, `link "sqlite3";` becomes `-lsqlite3`).
 - Built-ins: `put`, `print`, `len`, `str`, `int`, `float`, `assert`, `input`.
-- Native interop: `@c.printf(...)`, `@math.sqrt(...)`.
+- Native interop: `import "stdio.h"; extern fn printf(format: str, ...): i32;`
+  followed by ordinary `printf(...)` calls. Existing `@c.printf(...)` and
+  `@math.sqrt(...)` calls remain available.
+- C ABI types include `i8`/`u8` through `i64`/`u64`, `usize`, `isize`, `ptr`,
+  and explicit aliases such as `c_int` and `c_ulong`. Unknown identifier types
+  in an `extern fn` signature are opaque C typedefs; `FILE` maps to `FILE*`.
+- Systems features include fixed arrays (`let a: i32[4] = [1, 2, 3, 4];`),
+  typed slices (`let view: slice[i32] = a[1:3];`), indexing, pointer types
+  (`i32*`), `&` and `*`, C-layout `struct` and `union` declarations with
+  aggregate initializers, and `volatile` qualified types.
+- `asm("instruction");` and `asm volatile("instruction");` emit GNU-style
+  inline assembly templates. Assembly constraints and operands are not yet
+  represented by source syntax.
 
 ## 📋 Requirements
 
@@ -119,6 +140,75 @@ rm -rf bin/ build/
 > statement expressions) for assign-to-declare and `Class.init(...)`. Build the
 > result with GCC/Clang in GNU mode, e.g. `cc output.c -o program`.
 
+### Native C headers and libraries
+
+Import a system header directly. `extern fn` gives the call a checked Tesseract
+signature and emits a C prototype; the included header lets the C compiler
+check that prototype against the library declaration:
+
+```tesseract
+import "stdio.h";
+extern fn printf(format: str, ...): i32;
+
+let value = 42;
+printf("value = %lld\n", value);
+```
+
+```sh
+./bin/terra examples/c_import.t -o /tmp/c_import.c
+cc /tmp/c_import.c -o /tmp/c_import
+```
+
+For libraries that need a linker flag, pass it to the C compiler when building
+the generated source, for example `cc app.c -lsqlite3 -o app`, or declare it in
+the source and use the executable build mode:
+
+```tesseract
+import "sqlite3.h" as sqlite;
+link "sqlite3";
+```
+
+```sh
+./bin/terra app.t --compile -o app
+```
+
+`--compile` invokes the selected compiler directly, without a shell, and
+publishes the executable only after a successful compile. Select another
+compiler with `--cc /path/to/cc`. Header names and library names are validated.
+Variadic calls follow the C ABI, including C's default argument promotions and
+format-string rules.
+
+Cross-compilation passes a target triple to Clang:
+
+```sh
+terra app.t --compile --cc clang --target aarch64-unknown-linux-gnu -o app
+```
+
+`--freestanding` emits a relocatable object (`terra.o` by default) without a
+hosted runtime prelude or system link step. Functions, records, arrays, slices,
+pointers, and inline assembly are supported. Hosted built-ins, Terra classes,
+and executable top-level statements are rejected in this mode. Startup code,
+the linker script, and the platform runtime are supplied when linking:
+
+```sh
+terra kernel.t --compile --cc clang --target x86_64-unknown-none-elf \
+  --freestanding -o kernel.o
+```
+
+An opaque C typedef can be used without exposing its layout:
+
+```tesseract
+import "stdio.h";
+extern fn fopen(path: str, mode: str): FILE;
+extern fn fputs(text: str, stream: FILE): i32;
+extern fn fclose(stream: FILE): i32;
+```
+
+See [c_file.t](/home/votbotcot/Terra/examples/c_file.t) for a complete example.
+File-based Tesseract module imports remain unsupported. The executable build
+mode is currently POSIX-only; C source generation remains available on all
+supported platforms.
+
 ### Command Line Options
 
 | Option | Long Option | Description |
@@ -129,6 +219,8 @@ rm -rf bin/ build/
 | `-o` | `--output` | Output path; `-` means stdout (`--output=path` also works) |
 | `-c` | `--check` | Parse and type-check only, do not generate C |
 | | `--stdout` | Write generated C to standard output |
+| | `--compile` | Compile generated C into an executable |
+| | `--cc <path>` | Select compiler for `--compile` |
 | `-q` | `--quiet` | Suppress progress messages |
 | | `--` | Treat all following arguments as paths |
 

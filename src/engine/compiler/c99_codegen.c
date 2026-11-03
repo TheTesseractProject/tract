@@ -173,6 +173,26 @@ static void append_ident(c99_codegen *gen, const char *name) {
     if (is_c_keyword(name)) append_str(gen, "_");
 }
 
+static bool safe_header_name(const char *header) {
+    if (header == NULL || header[0] == '\0' || header[0] == '/') return false;
+    size_t segment = 0;
+    for (size_t i = 0;; i++) {
+        unsigned char c = (unsigned char)header[i];
+        if (c == '/' || c == '\0') {
+            size_t n = i - segment;
+            if (n == 0 || (n == 1 && header[segment] == '.') ||
+                (n == 2 && header[segment] == '.' && header[segment + 1] == '.'))
+                return false;
+            if (c == '\0') return true;
+            segment = i + 1;
+        } else if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                     (c >= '0' && c <= '9') || c == '_' || c == '-' ||
+                     c == '.' || c == '+')) {
+            return false;
+        }
+    }
+}
+
 static bool is_declared_var(c99_codegen *gen, const char *name) {
     for (size_t i = 0; i < gen->declared_count; i++) {
         if (strcmp(gen->declared[i], name) == 0) return true;
@@ -203,12 +223,61 @@ static const char* get_var_class(c99_codegen *gen, const char *name) {
 static bool expr_is_string_like(c99_codegen *gen, tess_expr *e);
 static bool expr_is_float_like(c99_codegen *gen, tess_expr *e);
 static bool is_class_name(c99_codegen *gen, const char *name);
+static bool is_record_name(c99_codegen *gen, const char *name);
+static tess_record *find_record(c99_codegen *gen, const char *name);
 static tess_field *find_field(tess_class *cls, const char *name);
 static tess_class *find_class(c99_codegen *gen, const char *name);
 static const char *expr_class(c99_codegen *gen, tess_expr *e);
 static const char *fn_ret_type_name(c99_codegen *gen, const char *name);
+static bool fn_returns_opaque_pointer(c99_codegen *gen, const char *name);
+static bool is_builtin_type_name(const char *tess_type);
 static const char *method_ret_type_name(c99_codegen *gen, tess_expr *obj_expr,
                                         const char *method_name);
+static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr);
+static void c99_codegen_array_initializer(c99_codegen *gen, tess_expr *expr);
+static const char *tess_type_to_c(const char *tess_type);
+static const char *expr_element_type(c99_codegen *gen, tess_expr *expr);
+static const char *expr_record_type(c99_codegen *gen, tess_expr *expr);
+static bool expr_is_float_like(c99_codegen *gen, tess_expr *e);
+
+static bool array_is_float(c99_codegen *gen, tess_expr *expr) {
+    if (expr == NULL || expr->kind != TESS_EXPR_ARRAY) return false;
+    for (size_t i = 0; i < expr->as.array.count; i++)
+        if (expr_is_float_like(gen, expr->as.array.items[i])) return true;
+    return false;
+}
+
+static void append_array_length(c99_codegen *gen, tess_expr *array) {
+    if (array != NULL && array->kind == TESS_EXPR_ARRAY) {
+        append_fprintf(gen, "%zu", array->as.array.count);
+    } else if (array != NULL && array->kind == TESS_EXPR_IDENT &&
+               get_var_class(gen, array->as.ident) != NULL &&
+               strcmp(get_var_class(gen, array->as.ident), "fixedarray") == 0) {
+        append_str(gen, "(sizeof("); c99_codegen_expr(gen, array);
+        append_str(gen, ") / sizeof(("); c99_codegen_expr(gen, array);
+        append_str(gen, ")[0]))");
+    } else {
+        gen->failed = true;
+    }
+}
+static bool is_float_type_name(const char *name) {
+    if (name != NULL && strncmp(name, "volatile ", 9) == 0) name += 9;
+    return name != NULL && (strcmp(name, "float") == 0 ||
+        strcmp(name, "f64") == 0 || strcmp(name, "c_float") == 0 ||
+        strcmp(name, "c_double") == 0);
+}
+
+static bool is_pointer_type_name(const char *name) {
+    return name != NULL && (strchr(name, '*') != NULL || strcmp(name, "ptr") == 0 ||
+        strcmp(name, "c_void") == 0 || strcmp(name, "null") == 0 ||
+        strcmp(name, "None") == 0);
+}
+
+static const char *float_c_type(const char *name) {
+    if (name != NULL && strncmp(name, "volatile ", 9) == 0) name += 9;
+    return strcmp(name, "c_float") == 0 ? "float" : "double";
+}
+
 static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
     if (!expr) return "int";
     switch (expr->kind) {
@@ -221,18 +290,25 @@ static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
              * spelling; semantic analysis remains the source of type errors. */
             const char *cls = get_var_class(gen, expr->as.ident);
             if (cls && is_class_name(gen, cls)) return cls;
+            if (cls && strcmp(cls, "ptr") == 0) {
+                static char pointer_type[160];
+                snprintf(pointer_type, sizeof pointer_type, "%s*",
+                         tess_type_to_c(expr_element_type(gen, expr)));
+                return pointer_type;
+            }
+            if (is_pointer_type_name(cls)) return "void*";
+            if (cls && strcmp(cls, "terra_slice") == 0) return "terra_slice";
             if (cls && (strcmp(cls, "str") == 0 || strcmp(cls, "string") == 0))
                 return "const char*";
-            if (cls && (strcmp(cls, "float") == 0 || strcmp(cls, "f64") == 0))
-                return "double";
+            if (is_float_type_name(cls)) return float_c_type(cls);
             if (gen->current_class != NULL) {
                 tess_field *field = find_field(
                     find_class(gen, gen->current_class), expr->as.ident);
                 if (field != NULL) {
                     if (strcmp(field->type, "str") == 0 ||
                         strcmp(field->type, "string") == 0) return "const char*";
-                    if (strcmp(field->type, "float") == 0 ||
-                        strcmp(field->type, "f64") == 0) return "double";
+                    if (is_float_type_name(field->type))
+                        return float_c_type(field->type);
                     if (is_class_name(gen, field->type)) return "void*";
                 }
             }
@@ -247,11 +323,13 @@ static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
                 if (strcmp(name, "float") == 0) return "double";
                 const char *ret = fn_ret_type_name(gen, name);
                 if (ret != NULL) {
+                    if (fn_returns_opaque_pointer(gen, name)) return "void*";
+                    if (is_pointer_type_name(ret)) return "void*";
                     if (strcmp(ret, "str") == 0 || strcmp(ret, "string") == 0)
                         return "const char*";
-                    if (strcmp(ret, "float") == 0 || strcmp(ret, "f64") == 0)
-                        return "double";
+                    if (is_float_type_name(ret)) return float_c_type(ret);
                     if (is_class_name(gen, ret)) return ret;
+                    if (is_record_name(gen, ret)) return ret;
                 }
             } else if (expr->as.call.callee &&
                        expr->as.call.callee->kind == TESS_EXPR_MEMBER) {
@@ -259,11 +337,12 @@ static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
                     gen, expr->as.call.callee->as.member.object,
                     expr->as.call.callee->as.member.name);
                 if (ret != NULL) {
+                    if (is_pointer_type_name(ret)) return "void*";
                     if (strcmp(ret, "str") == 0 || strcmp(ret, "string") == 0)
                         return "const char*";
-                    if (strcmp(ret, "float") == 0 || strcmp(ret, "f64") == 0)
-                        return "double";
+                    if (is_float_type_name(ret)) return float_c_type(ret);
                     if (is_class_name(gen, ret)) return ret;
+                    if (is_record_name(gen, ret)) return ret;
                 }
             }
             return "long long";
@@ -275,13 +354,20 @@ static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
                 tess_field *field = cls != NULL
                     ? find_field(find_class(gen, cls), expr->as.member.name)
                     : NULL;
+                if (field == NULL) {
+                    tess_record *record = find_record(gen,
+                        expr_record_type(gen, expr->as.member.object));
+                    if (record != NULL) for (size_t i = 0; i < record->field_count; i++)
+                        if (strcmp(record->fields[i].name, expr->as.member.name) == 0)
+                            field = &record->fields[i];
+                }
                 if (field != NULL && field->type != NULL) {
                     if (strcmp(field->type, "str") == 0 ||
                         strcmp(field->type, "string") == 0)
                         return "const char*";
-                    if (strcmp(field->type, "float") == 0 ||
-                        strcmp(field->type, "f64") == 0)
-                        return "double";
+                    if (is_float_type_name(field->type))
+                        return float_c_type(field->type);
+                    if (is_pointer_type_name(field->type)) return "void*";
                     if (is_class_name(gen, field->type)) return field->type;
                 } else if (field == NULL) {
                     /* A bare method reference (`n = a.get;`) calls it. */
@@ -291,23 +377,52 @@ static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
                         if (strcmp(ret, "str") == 0 ||
                             strcmp(ret, "string") == 0)
                             return "const char*";
-                        if (strcmp(ret, "float") == 0 ||
-                            strcmp(ret, "f64") == 0)
-                            return "double";
+                        if (is_float_type_name(ret))
+                            return float_c_type(ret);
+                        if (is_pointer_type_name(ret)) return "void*";
                         if (is_class_name(gen, ret)) return ret;
                     }
                 }
             }
             return "long long";
         }
-        case TESS_EXPR_BINARY:
+        case TESS_EXPR_BINARY: {
             if (expr_is_string_like(gen, expr)) return "const char*";
             if (expr_is_float_like(gen, expr)) return "double";
+            const char *lhs_type = expr->as.binary.lhs != NULL &&
+                expr->as.binary.lhs->kind == TESS_EXPR_IDENT
+                ? get_var_class(gen, expr->as.binary.lhs->as.ident) : NULL;
+            const char *rhs_type = expr->as.binary.rhs != NULL &&
+                expr->as.binary.rhs->kind == TESS_EXPR_IDENT
+                ? get_var_class(gen, expr->as.binary.rhs->as.ident) : NULL;
+            if (expr->as.binary.op == TESS_BIN_SUB && lhs_type != NULL &&
+                rhs_type != NULL && strcmp(lhs_type, "ptr") == 0 &&
+                strcmp(rhs_type, "ptr") == 0) return "long long";
+            if ((expr->as.binary.op == TESS_BIN_ADD || expr->as.binary.op == TESS_BIN_SUB) &&
+                lhs_type != NULL && strcmp(lhs_type, "ptr") == 0)
+                return expr_type_name(gen, expr->as.binary.lhs);
+            if (expr->as.binary.op == TESS_BIN_ADD && expr->as.binary.rhs != NULL &&
+                rhs_type != NULL && strcmp(rhs_type, "ptr") == 0)
+                return expr_type_name(gen, expr->as.binary.rhs);
             return "long long";
-        case TESS_EXPR_UNARY:
+        }
+        case TESS_EXPR_UNARY: {
+            if (expr->as.unary.op == TESS_UN_DEREFERENCE)
+                return tess_type_to_c(expr_element_type(gen, expr->as.unary.operand));
+            if (expr->as.unary.op == TESS_UN_ADDRESS) {
+                static char pointer_type[160];
+                snprintf(pointer_type, sizeof pointer_type, "%s*",
+                         expr_type_name(gen, expr->as.unary.operand));
+                return pointer_type;
+            }
             return expr_type_name(gen, expr->as.unary.operand);
+        }
         case TESS_EXPR_TERNARY:
             return expr_type_name(gen, expr->as.ternary.then_expr);
+        case TESS_EXPR_ARRAY: return array_is_float(gen, expr) ? "double*" : "int64_t*";
+        case TESS_EXPR_SLICE: return "terra_slice";
+        case TESS_EXPR_INDEX: return tess_type_to_c(expr_element_type(gen, expr->as.index.object));
+        case TESS_EXPR_RECORD_INIT: return expr->as.record_init.type_name;
         default: return "long long";
     }
 }
@@ -322,17 +437,49 @@ static void record_var_class(c99_codegen *gen, const char *name, const char *cls
     }
     if (gen->var_count == gen->var_cap) {
         size_t cap = gen->var_cap == 0 ? 8 : gen->var_cap * 2;
-        char **names = realloc(gen->var_names, cap * sizeof(char*));
-        if (!names) { gen->failed = true; return; }
+        char **names = malloc(cap * sizeof(char*));
+        char **classes = malloc(cap * sizeof(char*));
+        char **elements = malloc(cap * sizeof(char*));
+        if (!names || !classes || !elements) {
+            free(names); free(classes); free(elements); gen->failed = true; return;
+        }
+        if (gen->var_count) {
+            memcpy(names, gen->var_names, gen->var_count * sizeof(char*));
+            memcpy(classes, gen->var_classes, gen->var_count * sizeof(char*));
+            memcpy(elements, gen->var_element_types, gen->var_count * sizeof(char*));
+        }
+        free(gen->var_names); free(gen->var_classes); free(gen->var_element_types);
         gen->var_names = names;
-        char **classes = realloc(gen->var_classes, cap * sizeof(char*));
-        if (!classes) { gen->failed = true; return; }
         gen->var_classes = classes;
+        gen->var_element_types = elements;
         gen->var_cap = cap;
     }
     gen->var_names[gen->var_count] = (char*)name;
     gen->var_classes[gen->var_count] = (char*)cls;
+    gen->var_element_types[gen->var_count] = NULL;
     gen->var_count++;
+}
+
+static void record_var_element(c99_codegen *gen, const char *name,
+                               const char *category, const char *element_type) {
+    record_var_class(gen, name, category);
+    const char *stable_type = element_type != NULL && gen->program != NULL
+        ? tess_arena_strndup(&gen->program->arena, element_type, strlen(element_type))
+        : element_type;
+    if (stable_type == NULL) { gen->failed = true; return; }
+    for (size_t i = 0; i < gen->var_count; i++) {
+        if (strcmp(gen->var_names[i], name) == 0) {
+            gen->var_element_types[i] = (char *)stable_type;
+            return;
+        }
+    }
+}
+
+static const char *get_var_element(c99_codegen *gen, const char *name) {
+    if (!gen || !name) return NULL;
+    for (size_t i = 0; i < gen->var_count; i++)
+        if (strcmp(gen->var_names[i], name) == 0) return gen->var_element_types[i];
+    return NULL;
 }
 
 static void forget_var_class(c99_codegen *gen, const char *name) {
@@ -342,6 +489,7 @@ static void forget_var_class(c99_codegen *gen, const char *name) {
             /* Swap-remove keeps updates O(1) after the lookup. */
             gen->var_names[i] = gen->var_names[gen->var_count - 1];
             gen->var_classes[i] = gen->var_classes[gen->var_count - 1];
+            gen->var_element_types[i] = gen->var_element_types[gen->var_count - 1];
             gen->var_count--;
             return;
         }
@@ -360,26 +508,185 @@ static bool is_class_name(c99_codegen *gen, const char *name) {
     return false;
 }
 
+static tess_record *find_record(c99_codegen *gen, const char *name) {
+    if (!gen || !gen->program || !name) return NULL;
+    for (size_t i = 0; i < gen->program->count; i++) {
+        tess_stmt *st = gen->program->items[i];
+        if (st && st->kind == TESS_STMT_RECORD && st->as.record_decl &&
+            strcmp(st->as.record_decl->name, name) == 0) return st->as.record_decl;
+    }
+    return NULL;
+}
+
+static bool is_record_name(c99_codegen *gen, const char *name) {
+    return find_record(gen, name) != NULL;
+}
+
+static const char *expr_record_type(c99_codegen *gen, tess_expr *expr) {
+    if (expr == NULL) return NULL;
+    if (expr->kind == TESS_EXPR_RECORD_INIT) return expr->as.record_init.type_name;
+    if (expr->kind == TESS_EXPR_IDENT) {
+        const char *type = get_var_class(gen, expr->as.ident);
+        return is_record_name(gen, type) ? type : NULL;
+    }
+    if (expr->kind == TESS_EXPR_CALL && expr->as.call.callee != NULL) {
+        if (expr->as.call.callee->kind == TESS_EXPR_IDENT) {
+            const char *ret = fn_ret_type_name(gen, expr->as.call.callee->as.ident);
+            return is_record_name(gen, ret) ? ret : NULL;
+        }
+    }
+    if (expr->kind == TESS_EXPR_MEMBER) {
+        const char *parent_type = expr_record_type(gen, expr->as.member.object);
+        tess_record *record = find_record(gen, parent_type);
+        if (record != NULL) {
+            for (size_t i = 0; i < record->field_count; i++)
+                if (strcmp(record->fields[i].name, expr->as.member.name) == 0 &&
+                    is_record_name(gen, record->fields[i].type))
+                    return record->fields[i].type;
+        }
+    }
+    return NULL;
+}
+
+static bool has_language_main(c99_codegen *gen) {
+    if (gen == NULL || gen->program == NULL) return false;
+    for (size_t i = 0; i < gen->program->count; i++) {
+        tess_stmt *st = gen->program->items[i];
+        if (st != NULL && st->kind == TESS_STMT_FN &&
+            !st->as.fn.external && st->as.fn.name != NULL &&
+            strcmp(st->as.fn.name, "main") == 0) return true;
+    }
+    return false;
+}
+
+static void append_function_ident(c99_codegen *gen, const char *name) {
+    if (name != NULL && strcmp(name, "main") == 0 && has_language_main(gen))
+        append_str(gen, "terra_user_main");
+    else
+        append_ident(gen, name);
+}
+
 /**
  * @brief Convert Tesseract type name to C99 type
  */
 static const char* tess_type_to_c(const char *tess_type) {
     if (!tess_type) return "void";
+    if (strncmp(tess_type, "volatile ", 9) == 0) tess_type += 9;
+    const char *original_type = tess_type;
+    char base_type[128];
+    size_t base_len = strcspn(tess_type, "*[");
+    if (base_len < sizeof base_type && tess_type[base_len] != '\0') {
+        memcpy(base_type, tess_type, base_len);
+        base_type[base_len] = '\0';
+        tess_type = base_type;
+    }
     
-    if (strcmp(tess_type, "int") == 0 || strcmp(tess_type, "i32") == 0) {
+    if (strcmp(tess_type, "int") == 0) {
         return "int";
     } else if (strcmp(tess_type, "float") == 0 || strcmp(tess_type, "f64") == 0) {
         return "double";
+    } else if (strcmp(tess_type, "c_float") == 0) {
+        return "float";
+    } else if (strcmp(tess_type, "c_double") == 0) {
+        return "double";
     } else if (strcmp(tess_type, "bool") == 0 || strcmp(tess_type, "boolean") == 0) {
         return "bool";
+    } else if (strcmp(tess_type, "c_bool") == 0) {
+        return "_Bool";
     } else if (strcmp(tess_type, "str") == 0 || strcmp(tess_type, "string") == 0) {
-        return "char*";
+        return "const char*";
     } else if (strcmp(tess_type, "null") == 0 || strcmp(tess_type, "None") == 0) {
         return "void*";
+    } else if (strcmp(tess_type, "ptr") == 0 ||
+               strcmp(tess_type, "c_void") == 0) {
+        return "void*";
+    } else if (strcmp(tess_type, "void") == 0) {
+        return "void";
+    } else if (strcmp(tess_type, "slice") == 0 ||
+               strcmp(tess_type, "terra_slice") == 0) {
+        return "terra_slice";
+    } else if (strcmp(tess_type, "i8") == 0) {
+        return "int8_t";
+    } else if (strcmp(tess_type, "u8") == 0) {
+        return "uint8_t";
+    } else if (strcmp(tess_type, "i16") == 0) {
+        return "int16_t";
+    } else if (strcmp(tess_type, "u16") == 0) {
+        return "uint16_t";
+    } else if (strcmp(tess_type, "i32") == 0) {
+        return "int32_t";
+    } else if (strcmp(tess_type, "u32") == 0) {
+        return "uint32_t";
+    } else if (strcmp(tess_type, "i64") == 0) {
+        return "int64_t";
+    } else if (strcmp(tess_type, "u64") == 0) {
+        return "uint64_t";
+    } else if (strcmp(tess_type, "usize") == 0) {
+        return "size_t";
+    } else if (strcmp(tess_type, "isize") == 0) {
+        return "ptrdiff_t";
+    } else if (strcmp(tess_type, "c_int") == 0) {
+        return "int";
+    } else if (strcmp(tess_type, "c_long") == 0) {
+        return "long";
+    } else if (strcmp(tess_type, "c_ulong") == 0) {
+        return "unsigned long";
+    } else if (strcmp(tess_type, "c_char") == 0) {
+        return "char";
+    } else if (strcmp(tess_type, "c_schar") == 0) {
+        return "signed char";
+    } else if (strcmp(tess_type, "c_uchar") == 0) {
+        return "unsigned char";
+    } else if (strcmp(tess_type, "c_short") == 0) {
+        return "short";
+    } else if (strcmp(tess_type, "c_ushort") == 0) {
+        return "unsigned short";
+    } else if (strcmp(tess_type, "c_uint") == 0) {
+        return "unsigned int";
+    } else if (strcmp(tess_type, "c_longlong") == 0) {
+        return "long long";
+    } else if (strcmp(tess_type, "c_ulonglong") == 0) {
+        return "unsigned long long";
+    } else if (strcmp(tess_type, "size_t") == 0) {
+        return "size_t";
+    } else if (strcmp(tess_type, "ptrdiff_t") == 0) {
+        return "ptrdiff_t";
     }
     
     // Assume it's a class type (user-defined)
-    return tess_type;
+    return original_type;
+}
+
+static const char *expr_element_type(c99_codegen *gen, tess_expr *expr) {
+    static char base[128];
+    const char *type = NULL;
+    if (expr == NULL) return "i64";
+    if (expr->kind == TESS_EXPR_UNARY && expr->as.unary.op == TESS_UN_ADDRESS)
+        return expr_type_name(gen, expr->as.unary.operand);
+    if (expr->kind == TESS_EXPR_UNARY && expr->as.unary.op == TESS_UN_DEREFERENCE)
+        return expr_element_type(gen, expr->as.unary.operand);
+    if (expr->kind == TESS_EXPR_ARRAY) return array_is_float(gen, expr) ? "f64" : "i64";
+    if (expr->kind == TESS_EXPR_SLICE) return expr_element_type(gen, expr->as.slice.object);
+    if (expr->kind == TESS_EXPR_IDENT) type = get_var_element(gen, expr->as.ident);
+    if (expr->kind == TESS_EXPR_INDEX) return expr_element_type(gen, expr->as.index.object);
+    if (type == NULL) return "i64";
+    if (strncmp(type, "slice:", 6) == 0) type += 6;
+    if (strncmp(type, "fixedarray:", 11) == 0) type += 11;
+    if (strncmp(type, "volatile ", 9) == 0) type += 9;
+    size_t n = strcspn(type, "*[");
+    if (n >= sizeof base) n = sizeof base - 1;
+    memcpy(base, type, n); base[n] = '\0';
+    return base;
+}
+
+static const char *slice_element_decl_type(const char *type) {
+    static char element[128];
+    if (type == NULL || strncmp(type, "slice[", 6) != 0) return "i64";
+    const char *begin = type + 6;
+    size_t n = strcspn(begin, "]");
+    if (n >= sizeof element) n = sizeof element - 1;
+    memcpy(element, begin, n); element[n] = '\0';
+    return element;
 }
 
 /**
@@ -387,11 +694,31 @@ static const char* tess_type_to_c(const char *tess_type) {
  */
 static bool is_builtin_type_name(const char *tess_type) {
     if (!tess_type) return false;
+    if (strncmp(tess_type, "volatile ", 9) == 0) tess_type += 9;
+    if (strpbrk(tess_type, "*[") != NULL) return true;
     return strcmp(tess_type, "int") == 0 || strcmp(tess_type, "i32") == 0 ||
            strcmp(tess_type, "float") == 0 || strcmp(tess_type, "f64") == 0 ||
+           strcmp(tess_type, "c_float") == 0 ||
+           strcmp(tess_type, "c_double") == 0 ||
            strcmp(tess_type, "bool") == 0 || strcmp(tess_type, "boolean") == 0 ||
            strcmp(tess_type, "str") == 0 || strcmp(tess_type, "string") == 0 ||
-           strcmp(tess_type, "null") == 0 || strcmp(tess_type, "None") == 0;
+           strcmp(tess_type, "null") == 0 || strcmp(tess_type, "None") == 0 ||
+           strcmp(tess_type, "ptr") == 0 || strcmp(tess_type, "void") == 0 ||
+           strcmp(tess_type, "c_void") == 0 || strcmp(tess_type, "c_bool") == 0 ||
+           strcmp(tess_type, "i8") == 0 || strcmp(tess_type, "u8") == 0 ||
+           strcmp(tess_type, "i16") == 0 || strcmp(tess_type, "u16") == 0 ||
+           strcmp(tess_type, "u32") == 0 || strcmp(tess_type, "i64") == 0 ||
+           strcmp(tess_type, "u64") == 0 || strcmp(tess_type, "usize") == 0 ||
+           strcmp(tess_type, "isize") == 0 || strcmp(tess_type, "c_int") == 0 ||
+           strcmp(tess_type, "c_long") == 0 || strcmp(tess_type, "c_ulong") == 0 ||
+           strcmp(tess_type, "c_char") == 0 || strcmp(tess_type, "c_schar") == 0 ||
+           strcmp(tess_type, "c_uchar") == 0 || strcmp(tess_type, "c_short") == 0 ||
+           strcmp(tess_type, "c_ushort") == 0 || strcmp(tess_type, "c_uint") == 0 ||
+           strcmp(tess_type, "c_longlong") == 0 ||
+           strcmp(tess_type, "c_ulonglong") == 0 ||
+           strcmp(tess_type, "size_t") == 0 || strcmp(tess_type, "ptrdiff_t") == 0 ||
+           strcmp(tess_type, "terra_slice") == 0 || strcmp(tess_type, "slice") == 0 ||
+           strcmp(tess_type, "int64_t*") == 0;
 }
 
 /**
@@ -402,10 +729,46 @@ static bool is_builtin_type_name(const char *tess_type) {
  */
 static void append_declarator(c99_codegen *gen, const char *tess_type,
                               const char *name) {
-    const char *c_type = tess_type_to_c(tess_type);
-    append_fprintf(gen, "%s%s ", c_type,
-                   is_builtin_type_name(tess_type) ? "" : "*");
+    bool is_volatile = tess_type != NULL && strncmp(tess_type, "volatile ", 9) == 0;
+    if (is_volatile) tess_type += 9;
+    bool generic_slice = tess_type != NULL && strncmp(tess_type, "slice[", 6) == 0;
+    size_t base_len = generic_slice ? 5 : (tess_type != NULL ? strcspn(tess_type, "*[") : 0);
+    char base[128];
+    if (base_len >= sizeof base) base_len = sizeof base - 1;
+    if (tess_type != NULL) memcpy(base, tess_type, base_len);
+    base[base_len] = '\0';
+    const char *c_type = tess_type_to_c(base);
+    append_fprintf(gen, "%s%s", is_volatile ? "volatile " : "", c_type);
+    size_t pointer_count = 0;
+    for (size_t i = base_len; tess_type != NULL && tess_type[i] == '*'; i++) pointer_count++;
+    if (pointer_count == 0 && !is_builtin_type_name(tess_type) && !is_record_name(gen, base))
+        pointer_count = 1;
+    while (pointer_count--) append_str(gen, "*");
+    append_str(gen, " ");
     append_ident(gen, name);
+    if (!generic_slice && tess_type != NULL && tess_type[base_len] == '*') {
+        size_t i = base_len;
+        while (tess_type[i] == '*') i++;
+        if (tess_type[i] == '[') append_str(gen, tess_type + i);
+    } else if (!generic_slice && tess_type != NULL && tess_type[base_len] == '[') {
+        append_str(gen, tess_type + base_len);
+    }
+}
+
+static void append_return_type(c99_codegen *gen, const char *tess_type) {
+    bool is_volatile = tess_type != NULL && strncmp(tess_type, "volatile ", 9) == 0;
+    if (is_volatile) tess_type += 9;
+    bool generic_slice = tess_type != NULL && strncmp(tess_type, "slice[", 6) == 0;
+    size_t base_len = generic_slice ? 5 : (tess_type != NULL ? strcspn(tess_type, "*[") : 0);
+    char base[128];
+    if (base_len >= sizeof base) base_len = sizeof base - 1;
+    if (tess_type != NULL) memcpy(base, tess_type, base_len);
+    base[base_len] = '\0';
+    append_fprintf(gen, "%s%s", is_volatile ? "volatile " : "", tess_type_to_c(base));
+    if (tess_type != NULL) {
+        for (size_t i = base_len; tess_type[i] == '*'; i++) append_str(gen, "*");
+        if (!generic_slice && tess_type[base_len] == '[') append_str(gen, "*");
+    }
 }
 
 static bool expr_is_string_like(c99_codegen *gen, tess_expr *e);
@@ -436,8 +799,7 @@ static bool expr_is_float_like(c99_codegen *gen, tess_expr *e) {
                                                e->as.ident);
                 if (field != NULL) cls = field->type;
             }
-            return cls != NULL && (strcmp(cls, "float") == 0 ||
-                                   strcmp(cls, "f64") == 0);
+            return is_float_type_name(cls);
         }
         case TESS_EXPR_MEMBER: {
             /* Float-typed field access (self->b, t->value) */
@@ -445,9 +807,7 @@ static bool expr_is_float_like(c99_codegen *gen, tess_expr *e) {
             const char *cls = expr_class(gen, e->as.member.object);
             if (cls == NULL) return false;
             tess_field *field = find_field(find_class(gen, cls), e->as.member.name);
-            return field != NULL && field->type != NULL &&
-                   (strcmp(field->type, "float") == 0 ||
-                    strcmp(field->type, "f64") == 0);
+            return field != NULL && is_float_type_name(field->type);
         }
         case TESS_EXPR_CALL: {
             if (e->as.call.callee && e->as.call.callee->kind == TESS_EXPR_IDENT) {
@@ -456,8 +816,7 @@ static bool expr_is_float_like(c99_codegen *gen, tess_expr *e) {
                 }
                 const char *ret = fn_ret_type_name(
                     gen, e->as.call.callee->as.ident);
-                if (ret != NULL && (strcmp(ret, "float") == 0 ||
-                                    strcmp(ret, "f64") == 0)) {
+                if (is_float_type_name(ret)) {
                     return true;
                 }
             } else if (e->as.call.callee &&
@@ -465,15 +824,19 @@ static bool expr_is_float_like(c99_codegen *gen, tess_expr *e) {
                 const char *ret = method_ret_type_name(
                     gen, e->as.call.callee->as.member.object,
                     e->as.call.callee->as.member.name);
-                if (ret != NULL && (strcmp(ret, "float") == 0 ||
-                                    strcmp(ret, "f64") == 0)) {
+                if (is_float_type_name(ret)) {
                     return true;
                 }
             }
             return false;
         }
+        case TESS_EXPR_INDEX:
+            return is_float_type_name(expr_element_type(gen, e->as.index.object));
         case TESS_EXPR_UNARY:
-            return expr_is_float_like(gen, e->as.unary.operand);
+            if (e->as.unary.op == TESS_UN_DEREFERENCE)
+                return is_float_type_name(expr_element_type(gen, e->as.unary.operand));
+            return e->as.unary.op != TESS_UN_ADDRESS &&
+                   expr_is_float_like(gen, e->as.unary.operand);
         case TESS_EXPR_BINARY: {
             /* Arithmetic expressions with at least one float operand */
             bool lhs_float = expr_is_float_like(gen, e->as.binary.lhs);
@@ -626,6 +989,33 @@ static const char *fn_ret_type_name(c99_codegen *gen, const char *name) {
     return NULL;
 }
 
+static bool fn_returns_opaque_pointer(c99_codegen *gen, const char *name) {
+    if (gen == NULL || gen->program == NULL || name == NULL) return false;
+    for (size_t i = 0; i < gen->program->count; i++) {
+        tess_stmt *st = gen->program->items[i];
+        if (st == NULL || st->kind != TESS_STMT_FN ||
+            !st->as.fn.external || st->as.fn.ret_type == NULL ||
+            strcmp(st->as.fn.name, name) != 0) continue;
+        return !is_builtin_type_name(st->as.fn.ret_type) &&
+               !is_class_name(gen, st->as.fn.ret_type) &&
+               !is_record_name(gen, st->as.fn.ret_type);
+    }
+    return false;
+}
+
+static void append_fn_return_type(c99_codegen *gen, tess_stmt *stmt) {
+    const char *ret = stmt->as.fn.ret_type;
+    if (ret == NULL || strcmp(ret, "null") == 0) {
+        append_str(gen, "void ");
+    } else if (stmt->as.fn.external && !is_builtin_type_name(ret) &&
+               !is_class_name(gen, ret) && !is_record_name(gen, ret)) {
+        append_fprintf(gen, "%s* ", ret);
+    } else {
+        append_return_type(gen, ret);
+        append_str(gen, " ");
+    }
+}
+
 /* Declared return type of the method `method_name` called on `obj_expr`, or
  * NULL when the receiver or method is unknown / returns nothing. */
 static const char *method_ret_type_name(c99_codegen *gen, tess_expr *obj_expr,
@@ -740,6 +1130,65 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             append_fprintf(gen, "%" PRId64, expr->as.int_value);
             break;
         }
+        case TESS_EXPR_INDEX: {
+            const char *slice_type = expr->as.index.object != NULL &&
+                expr->as.index.object->kind == TESS_EXPR_IDENT
+                ? get_var_class(gen, expr->as.index.object->as.ident) : NULL;
+            if ((expr->as.index.object != NULL &&
+                 expr->as.index.object->kind == TESS_EXPR_SLICE) ||
+                (slice_type != NULL && strcmp(slice_type, "terra_slice") == 0)) {
+                append_str(gen, "((");
+                append_str(gen, tess_type_to_c(expr_element_type(gen, expr->as.index.object)));
+                append_str(gen, "*)(("); c99_codegen_expr(gen, expr->as.index.object);
+                append_str(gen, ").data))[" ); c99_codegen_expr(gen, expr->as.index.index);
+                append_str(gen, "]");
+                break;
+            }
+            append_str(gen, "("); c99_codegen_expr(gen, expr->as.index.object);
+            append_str(gen, "["); c99_codegen_expr(gen, expr->as.index.index);
+            append_str(gen, "])");
+            break;
+        }
+        case TESS_EXPR_ARRAY: {
+            append_str(gen, array_is_float(gen, expr) ? "((double[]){" : "((int64_t[]){");
+            for (size_t i = 0; i < expr->as.array.count; i++) {
+                if (i) append_str(gen, ", ");
+                c99_codegen_expr(gen, expr->as.array.items[i]);
+            }
+            append_str(gen, "})");
+            break;
+        }
+        case TESS_EXPR_SLICE: {
+            append_str(gen, "((terra_slice){ .data = (void*)&(");
+            c99_codegen_expr(gen, expr->as.slice.object);
+            append_str(gen, "[");
+            if (expr->as.slice.start) c99_codegen_expr(gen, expr->as.slice.start);
+            else append_str(gen, "0");
+            append_str(gen, "]), .len = (size_t)(");
+            if (expr->as.slice.end) c99_codegen_expr(gen, expr->as.slice.end);
+            else append_array_length(gen, expr->as.slice.object);
+            append_str(gen, " - ");
+            if (expr->as.slice.start) c99_codegen_expr(gen, expr->as.slice.start);
+            else append_str(gen, "0");
+            append_str(gen, ") })");
+            break;
+        }
+        case TESS_EXPR_RECORD_INIT: {
+            append_str(gen, "("); append_str(gen, expr->as.record_init.type_name);
+            append_str(gen, "){ ");
+            for (size_t i = 0; i < expr->as.record_init.count; i++) {
+                if (i) append_str(gen, ", ");
+                append_str(gen, "."); append_ident(gen, expr->as.record_init.names[i]);
+                append_str(gen, " = ");
+                if (expr->as.record_init.values[i] != NULL &&
+                    expr->as.record_init.values[i]->kind == TESS_EXPR_ARRAY)
+                    c99_codegen_array_initializer(gen, expr->as.record_init.values[i]);
+                else
+                    c99_codegen_expr(gen, expr->as.record_init.values[i]);
+            }
+            append_str(gen, " }");
+            break;
+        }
         case TESS_EXPR_FLOAT: {
             char tmp[64];
             snprintf(tmp, sizeof tmp, "%.17g", expr->as.float_value);
@@ -767,7 +1216,7 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                 is_field_of_current_class(gen, expr->as.ident)) {
                 append_str(gen, "self->");
             }
-            append_ident(gen, expr->as.ident);
+            append_function_ident(gen, expr->as.ident);
             break;
         }
         case TESS_EXPR_ASSIGN: {
@@ -803,6 +1252,12 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                 append_ident(gen, module_resolve(gen, obj_expr->as.ident));
                 append_str(gen, "_");
                 append_ident(gen, member);
+                break;
+            }
+
+            if (is_record_name(gen, expr_record_type(gen, obj_expr))) {
+                append_str(gen, "("); c99_codegen_expr(gen, obj_expr);
+                append_str(gen, ")."); append_ident(gen, member);
                 break;
             }
 
@@ -1027,6 +1482,23 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                     append_str(gen, "terra_float_from_int");
                 }
             } else if (call_name != NULL && arg0 != NULL &&
+                       strcmp(call_name, "len") == 0 &&
+                       (arg0->kind == TESS_EXPR_SLICE ||
+                        (arg0->kind == TESS_EXPR_IDENT &&
+                         get_var_class(gen, arg0->as.ident) != NULL &&
+                         strcmp(get_var_class(gen, arg0->as.ident), "terra_slice") == 0))) {
+                append_str(gen, "("); c99_codegen_expr(gen, arg0);
+                append_str(gen, ").len");
+                break;
+            } else if (call_name != NULL && arg0 != NULL &&
+                       strcmp(call_name, "len") == 0 &&
+                       (arg0->kind == TESS_EXPR_ARRAY ||
+                        (arg0->kind == TESS_EXPR_IDENT &&
+                         get_var_class(gen, arg0->as.ident) != NULL &&
+                         strcmp(get_var_class(gen, arg0->as.ident), "fixedarray") == 0))) {
+                append_array_length(gen, arg0);
+                break;
+            } else if (call_name != NULL && arg0 != NULL &&
                        strcmp(call_name, "len") == 0) {
                 gen->runtime_used |= RT_LEN;
                 append_str(gen, "terra_len");
@@ -1112,9 +1584,11 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                 case TESS_UN_POS: append_str(gen, "+("); break;
                 case TESS_UN_NOT: append_str(gen, "!("); break;
                 case TESS_UN_BIT_NOT: append_str(gen, "~("); break;
+                case TESS_UN_ADDRESS: append_str(gen, "(&("); break;
+                case TESS_UN_DEREFERENCE: append_str(gen, "(*("); break;
             }
             c99_codegen_expr(gen, expr->as.unary.operand);
-            append_str(gen, ")");
+            append_str(gen, (expr->as.unary.op == TESS_UN_ADDRESS || expr->as.unary.op == TESS_UN_DEREFERENCE) ? "))" : ")");
             break;
         }
         case TESS_EXPR_MODULE: {
@@ -1155,6 +1629,19 @@ static void c99_codegen_body(c99_codegen *gen, tess_stmt *body) {
     }
 }
 
+static void c99_codegen_array_initializer(c99_codegen *gen, tess_expr *expr) {
+    if (expr == NULL || expr->kind != TESS_EXPR_ARRAY) {
+        c99_codegen_expr(gen, expr);
+        return;
+    }
+    append_str(gen, "{");
+    for (size_t i = 0; i < expr->as.array.count; i++) {
+        if (i) append_str(gen, ", ");
+        c99_codegen_array_initializer(gen, expr->as.array.items[i]);
+    }
+    append_str(gen, "}");
+}
+
 /**
  * @brief Generate C99 code for a statement
  */
@@ -1168,6 +1655,9 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
         case TESS_STMT_CLASS:
             // Already handled in generate_classes
             break;
+        case TESS_STMT_RECORD:
+            /* Emitted in the type prelude. */
+            break;
             
         case TESS_STMT_EXPR: {
             append_indent(gen);
@@ -1179,6 +1669,8 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
         case TESS_STMT_ASSIGN: {
             append_indent(gen);
             if (stmt->as.assign.target && stmt->as.assign.value) {
+                bool target_emitted = false;
+                bool array_initializer = false;
                 /* Declare new bare variables on first assignment. */
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT) {
                     const char *name = stmt->as.assign.target->as.ident;
@@ -1186,29 +1678,90 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                      * set at branch boundaries preserves C block scope. */
                     if (!is_declared_var(gen, name) &&
                         !(gen->current_class && is_field_of_current_class(gen, name))) {
-                        const char *class_type = construction_class(
-                            gen, stmt->as.assign.value);
+                        const char *class_type = stmt->as.assign.declared_type == NULL
+                            ? construction_class(gen, stmt->as.assign.value) : NULL;
                         if (class_type != NULL) {
                             append_fprintf(gen, "%s* ", class_type);
                             record_var_class(gen, name, class_type);
                         } else {
-                            append_fprintf(gen, "%s ",
-                                           expr_type_name(gen,
-                                               stmt->as.assign.value));
+                            if (stmt->as.assign.value->kind == TESS_EXPR_ARRAY &&
+                                stmt->as.assign.declared_type == NULL) {
+                                append_fprintf(gen, "%s %s[%zu] ",
+                                    array_is_float(gen, stmt->as.assign.value) ? "double" : "int64_t", name,
+                                    stmt->as.assign.value->as.array.count);
+                                target_emitted = true;
+                                array_initializer = true;
+                            }
+                            if (stmt->as.assign.value->kind == TESS_EXPR_CALL &&
+                                stmt->as.assign.value->as.call.callee &&
+                                stmt->as.assign.value->as.call.callee->kind == TESS_EXPR_IDENT) {
+                                const char *ret = fn_ret_type_name(gen,
+                                    stmt->as.assign.value->as.call.callee->as.ident);
+                                if (is_record_name(gen, ret))
+                                    record_var_class(gen, name, ret);
+                            }
+                            if (target_emitted) {
+                                /* Fixed local array declarator emitted above. */
+                            } else if (stmt->as.assign.declared_type != NULL) {
+                                append_declarator(gen, stmt->as.assign.declared_type, name);
+                                target_emitted = true;
+                                array_initializer = strchr(stmt->as.assign.declared_type, '[') != NULL &&
+                                    stmt->as.assign.value->kind == TESS_EXPR_ARRAY;
+                                if (is_record_name(gen, stmt->as.assign.declared_type))
+                                    record_var_class(gen, name, stmt->as.assign.declared_type);
+                            } else {
+                                append_fprintf(gen, "%s ", expr_type_name(gen, stmt->as.assign.value));
+                            }
                         }
                         mark_declared_var(gen, name);
                     }
                 }
-                c99_codegen_expr(gen, stmt->as.assign.target);
+                if (!target_emitted) c99_codegen_expr(gen, stmt->as.assign.target);
                 /* Refresh tracked type: a variable can be reassigned with a
                  * different type, so stale entries must not survive. */
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT) {
                     forget_var_class(gen, stmt->as.assign.target->as.ident);
+                    const char *assigned_c_type = expr_type_name(gen, stmt->as.assign.value);
+                    if (!expr_is_string_like(gen, stmt->as.assign.value) &&
+                        assigned_c_type != NULL && strchr(assigned_c_type, '*') != NULL)
+                        record_var_element(gen, stmt->as.assign.target->as.ident,
+                                           "ptr", assigned_c_type);
+                    if (stmt->as.assign.value->kind == TESS_EXPR_RECORD_INIT)
+                        record_var_class(gen, stmt->as.assign.target->as.ident,
+                                         stmt->as.assign.value->as.record_init.type_name);
+                    if (is_record_name(gen, stmt->as.assign.declared_type))
+                        record_var_class(gen, stmt->as.assign.target->as.ident,
+                                         stmt->as.assign.declared_type);
+                    if (stmt->as.assign.declared_type != NULL &&
+                        strchr(stmt->as.assign.declared_type, '[') != NULL)
+                        record_var_element(gen, stmt->as.assign.target->as.ident,
+                                           "fixedarray", stmt->as.assign.declared_type);
+                    else if (array_initializer)
+                        record_var_element(gen, stmt->as.assign.target->as.ident,
+                                           "fixedarray", array_is_float(gen, stmt->as.assign.value) ? "f64" : "i64");
+                    if (stmt->as.assign.value->kind == TESS_EXPR_SLICE)
+                        record_var_element(gen, stmt->as.assign.target->as.ident,
+                                           "terra_slice",
+                                           expr_element_type(gen, stmt->as.assign.value));
+                    if (stmt->as.assign.value->kind == TESS_EXPR_UNARY &&
+                        stmt->as.assign.value->as.unary.op == TESS_UN_ADDRESS)
+                        record_var_element(gen, stmt->as.assign.target->as.ident,
+                                           "ptr",
+                                           expr_type_name(gen,
+                                               stmt->as.assign.value->as.unary.operand));
+                    if (stmt->as.assign.declared_type != NULL &&
+                        strchr(stmt->as.assign.declared_type, '*') != NULL)
+                        record_var_element(gen, stmt->as.assign.target->as.ident,
+                                           "ptr", stmt->as.assign.declared_type);
                 }
                 /* Track string variables for concat handling. */
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
                     stmt->as.assign.value->kind == TESS_EXPR_STRING) {
                     record_var_class(gen, stmt->as.assign.target->as.ident, "str");
+                }
+                if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
+                    stmt->as.assign.value->kind == TESS_EXPR_SLICE) {
+                    record_var_class(gen, stmt->as.assign.target->as.ident, "terra_slice");
                 }
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
                     stmt->as.assign.value->kind == TESS_EXPR_BINARY &&
@@ -1258,11 +1811,22 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                     if (ret != NULL) {
                         if (strcmp(ret, "str") == 0 || strcmp(ret, "string") == 0) {
                             record_var_class(gen, stmt->as.assign.target->as.ident, "str");
-                        } else if (strcmp(ret, "float") == 0 || strcmp(ret, "f64") == 0) {
+                        } else if (is_float_type_name(ret)) {
                             record_var_class(gen, stmt->as.assign.target->as.ident, "float");
+                        } else if (is_pointer_type_name(ret)) {
+                            record_var_class(gen, stmt->as.assign.target->as.ident, "ptr");
                         } else if (is_class_name(gen, ret)) {
                             record_var_class(gen, stmt->as.assign.target->as.ident, ret);
+                        } else if (is_record_name(gen, ret)) {
+                            record_var_class(gen, stmt->as.assign.target->as.ident, ret);
                         }
+                    }
+                    if (stmt->as.assign.value->as.call.callee->kind ==
+                            TESS_EXPR_IDENT &&
+                        fn_returns_opaque_pointer(
+                            gen, stmt->as.assign.value->as.call.callee->as.ident)) {
+                        record_var_class(gen, stmt->as.assign.target->as.ident,
+                                         "ptr");
                     }
                 }
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
@@ -1282,8 +1846,10 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                     if (ret != NULL) {
                         if (strcmp(ret, "str") == 0 || strcmp(ret, "string") == 0) {
                             record_var_class(gen, stmt->as.assign.target->as.ident, "str");
-                        } else if (strcmp(ret, "float") == 0 || strcmp(ret, "f64") == 0) {
+                        } else if (is_float_type_name(ret)) {
                             record_var_class(gen, stmt->as.assign.target->as.ident, "float");
+                        } else if (is_pointer_type_name(ret)) {
+                            record_var_class(gen, stmt->as.assign.target->as.ident, "ptr");
                         } else if (is_class_name(gen, ret)) {
                             record_var_class(gen, stmt->as.assign.target->as.ident, ret);
                         }
@@ -1301,9 +1867,18 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                     stmt->as.assign.value->kind == TESS_EXPR_IDENT) {
                     const char *cls = get_var_class(gen, stmt->as.assign.value->as.ident);
                     if (cls) record_var_class(gen, stmt->as.assign.target->as.ident, cls);
+                    const char *element = get_var_element(gen, stmt->as.assign.value->as.ident);
+                    if (element != NULL && cls != NULL)
+                        record_var_element(gen, stmt->as.assign.target->as.ident, cls, element);
                 }
                 append_str(gen, " = ");
-                c99_codegen_expr(gen, stmt->as.assign.value);
+                if (array_initializer || (stmt->as.assign.declared_type != NULL &&
+                    stmt->as.assign.value->kind == TESS_EXPR_ARRAY &&
+                    strchr(stmt->as.assign.declared_type, '[') != NULL)) {
+                    c99_codegen_array_initializer(gen, stmt->as.assign.value);
+                } else {
+                    c99_codegen_expr(gen, stmt->as.assign.value);
+                }
                 append_str(gen, ";\n");
             } else {
                 append_str(gen, "// NULL assignment\n");
@@ -1351,6 +1926,39 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
             c99_codegen_body(gen, stmt->as.while_stmt.body);
             gen->declared_count = saved_declared;
             gen->var_count = saved_vars;
+            gen->indent_level--;
+            append_indent(gen);
+            append_str(gen, "}\n");
+            break;
+        }
+
+        case TESS_STMT_FOR: {
+            size_t saved_declared = gen->declared_count;
+            size_t saved_vars = gen->var_count;
+            append_indent(gen);
+            append_str(gen, "{\n");
+            gen->indent_level++;
+            if (stmt->as.for_stmt.init != NULL &&
+                stmt->as.for_stmt.init->kind != TESS_STMT_EMPTY) {
+                c99_codegen_stmt(gen, stmt->as.for_stmt.init);
+            }
+            append_indent(gen);
+            append_str(gen, "for (; ");
+            if (stmt->as.for_stmt.condition != NULL)
+                c99_codegen_expr(gen, stmt->as.for_stmt.condition);
+            else
+                append_str(gen, "true");
+            append_str(gen, "; ");
+            if (stmt->as.for_stmt.step != NULL)
+                c99_codegen_expr(gen, stmt->as.for_stmt.step);
+            append_str(gen, ") {\n");
+            gen->indent_level++;
+            c99_codegen_body(gen, stmt->as.for_stmt.body);
+            gen->declared_count = saved_declared;
+            gen->var_count = saved_vars;
+            gen->indent_level--;
+            append_indent(gen);
+            append_str(gen, "}\n");
             gen->indent_level--;
             append_indent(gen);
             append_str(gen, "}\n");
@@ -1404,6 +2012,24 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
         case TESS_STMT_IMPORT:
             /* Imports are compile-time declarations. */
             break;
+        case TESS_STMT_LINK:
+            /* Link directives are consumed by the executable build driver. */
+            break;
+        case TESS_STMT_BREAK:
+            append_indent(gen);
+            append_str(gen, "break;\n");
+            break;
+        case TESS_STMT_CONTINUE:
+            append_indent(gen);
+            append_str(gen, "continue;\n");
+            break;
+        case TESS_STMT_ASM:
+            append_indent(gen);
+            append_str(gen, stmt->as.assembly.is_volatile ? "__asm__ volatile (" : "__asm__ (");
+            append_c_string_literal(gen, stmt->as.assembly.text,
+                                    strlen(stmt->as.assembly.text));
+            append_str(gen, " : : : \"memory\");\n");
+            break;
         case TESS_STMT_FN:
             /* Emitted by the top-level function pass. */
             break;
@@ -1424,8 +2050,10 @@ static void c99_codegen_generate_method(c99_codegen *gen, tess_class *cls, tess_
         tess_param *param = &method->params[pi];
         if (param->type && (strcmp(param->type, "str") == 0 || strcmp(param->type, "string") == 0)) {
             record_var_class(gen, param->name, "str");
-        } else if (param->type && (strcmp(param->type, "float") == 0 || strcmp(param->type, "f64") == 0)) {
+        } else if (is_float_type_name(param->type)) {
             record_var_class(gen, param->name, "float");
+        } else if (is_record_name(gen, param->type)) {
+            record_var_class(gen, param->name, param->type);
         }
         /* Mark all parameters as declared so they don't get __auto_type */
         mark_declared_var(gen, param->name);
@@ -1439,8 +2067,8 @@ static void c99_codegen_generate_method(c99_codegen *gen, tess_class *cls, tess_
                        strcmp(method->ret_type, "null") == 0;
     gen->in_function = true;
     gen->fn_returns_void = method_void;
-    append_fprintf(gen, "%s ",
-                   method_void ? "void" : tess_type_to_c(method->ret_type));
+    if (method_void) append_str(gen, "void ");
+    else { append_return_type(gen, method->ret_type); append_str(gen, " "); }
     append_ident(gen, cls->name);
     append_str(gen, "_");
     append_ident(gen, method->name);
@@ -1503,6 +2131,7 @@ static void c99_codegen_generate_method(c99_codegen *gen, tess_class *cls, tess_
 
 static void c99_codegen_generate_function(c99_codegen *gen, tess_stmt *stmt) {
     if (!gen || !stmt || stmt->kind != TESS_STMT_FN) return;
+    if (stmt->as.fn.external) return;
     reset_function_state(gen);
     gen->current_class = NULL;
     tess_stmt *fn = stmt;
@@ -1512,9 +2141,10 @@ static void c99_codegen_generate_function(c99_codegen *gen, tess_stmt *stmt) {
                         strcmp(fn->as.fn.ret_type, "null") == 0;
     gen->in_function = true;
     gen->fn_returns_void = returns_void;
-    append_str(gen, "static ");
-    append_fprintf(gen, "%s ", returns_void ? "void" : tess_type_to_c(fn->as.fn.ret_type));
-    append_ident(gen, name);
+    if (!gen->freestanding) append_str(gen, "static ");
+    if (returns_void) append_str(gen, "void ");
+    else { append_return_type(gen, fn->as.fn.ret_type); append_str(gen, " "); }
+    append_function_ident(gen, name);
     append_str(gen, "(");
     if (fn->as.fn.param_count == 0) append_str(gen, "void");
     for (size_t i = 0; i < fn->as.fn.param_count; i++) {
@@ -1526,10 +2156,23 @@ static void c99_codegen_generate_function(c99_codegen *gen, tess_stmt *stmt) {
             (strcmp(fn->as.fn.params[i].type, "str") == 0 ||
              strcmp(fn->as.fn.params[i].type, "string") == 0))
             record_var_class(gen, fn->as.fn.params[i].name, "str");
-        if (fn->as.fn.params[i].type &&
-            (strcmp(fn->as.fn.params[i].type, "float") == 0 ||
-             strcmp(fn->as.fn.params[i].type, "f64") == 0))
+        if (is_float_type_name(fn->as.fn.params[i].type))
             record_var_class(gen, fn->as.fn.params[i].name, "float");
+        if (is_record_name(gen, fn->as.fn.params[i].type))
+            record_var_class(gen, fn->as.fn.params[i].name,
+                             fn->as.fn.params[i].type);
+        if (fn->as.fn.params[i].type &&
+            (strcmp(fn->as.fn.params[i].type, "slice") == 0 ||
+             strcmp(fn->as.fn.params[i].type, "terra_slice") == 0 ||
+             strncmp(fn->as.fn.params[i].type, "slice[", 6) == 0))
+            record_var_element(gen, fn->as.fn.params[i].name, "terra_slice",
+                               slice_element_decl_type(fn->as.fn.params[i].type));
+        else if (fn->as.fn.params[i].type && strchr(fn->as.fn.params[i].type, '*'))
+            record_var_element(gen, fn->as.fn.params[i].name, "ptr",
+                               fn->as.fn.params[i].type);
+        else if (fn->as.fn.params[i].type && strchr(fn->as.fn.params[i].type, '['))
+            record_var_element(gen, fn->as.fn.params[i].name, "ptr",
+                               fn->as.fn.params[i].type);
     }
     append_str(gen, ") {\n");
     gen->indent_level++;
@@ -1550,12 +2193,9 @@ static void c99_codegen_generate_functions(c99_codegen *gen,
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
         if (!stmt || stmt->kind != TESS_STMT_FN) continue;
-        bool returns_void = stmt->as.fn.ret_type == NULL ||
-            strcmp(stmt->as.fn.ret_type, "null") == 0;
-        append_str(gen, "static ");
-        append_fprintf(gen, "%s ", returns_void ? "void" :
-                      tess_type_to_c(stmt->as.fn.ret_type));
-        append_ident(gen, stmt->as.fn.name);
+        if (!stmt->as.fn.external && !gen->freestanding) append_str(gen, "static ");
+        append_fn_return_type(gen, stmt);
+        append_function_ident(gen, stmt->as.fn.name);
         append_str(gen, "(");
         if (stmt->as.fn.param_count == 0) append_str(gen, "void");
         for (size_t j = 0; j < stmt->as.fn.param_count; j++) {
@@ -1563,12 +2203,16 @@ static void c99_codegen_generate_functions(c99_codegen *gen,
             append_declarator(gen, stmt->as.fn.params[j].type,
                               stmt->as.fn.params[j].name);
         }
+        if (stmt->as.fn.variadic) {
+            if (stmt->as.fn.param_count != 0) append_str(gen, ", ");
+            append_str(gen, "...");
+        }
         append_str(gen, ");\n");
     }
     append_str(gen, "\n");
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
-        if (stmt && stmt->kind == TESS_STMT_FN)
+        if (stmt && stmt->kind == TESS_STMT_FN && !stmt->as.fn.external)
             c99_codegen_generate_function(gen, stmt);
     }
 }
@@ -1614,6 +2258,27 @@ static void c99_codegen_generate_class_init_helpers(c99_codegen *gen,
 static void c99_codegen_generate_classes(c99_codegen *gen, tess_program *program) {
     if (!gen || !program) return;
 
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *stmt = program->items[i];
+        if (!stmt || stmt->kind != TESS_STMT_RECORD || !stmt->as.record_decl) continue;
+        tess_record *record = stmt->as.record_decl;
+        append_fprintf(gen, "typedef %s %s %s;\n",
+                       record->is_union ? "union" : "struct",
+                       record->name, record->name);
+    }
+    for (size_t i = 0; i < program->count; i++) {
+        tess_stmt *stmt = program->items[i];
+        if (!stmt || stmt->kind != TESS_STMT_RECORD || !stmt->as.record_decl) continue;
+        tess_record *record = stmt->as.record_decl;
+        append_fprintf(gen, "%s %s {\n", record->is_union ? "union" : "struct", record->name);
+        for (size_t j = 0; j < record->field_count; j++) {
+            append_str(gen, "    ");
+            append_declarator(gen, record->fields[j].type, record->fields[j].name);
+            append_str(gen, ";\n");
+        }
+        append_str(gen, "};\n\n");
+    }
+
     /* Forward typedefs let fields and signatures refer to later classes. */
     for (size_t i = 0; i < program->count; i++) {
         tess_stmt *stmt = program->items[i];
@@ -1637,8 +2302,8 @@ static void c99_codegen_generate_classes(c99_codegen *gen, tess_program *program
             tess_method *method = &cls->methods[j];
             bool m_void = method->ret_type == NULL ||
                           strcmp(method->ret_type, "null") == 0;
-            append_fprintf(gen, "%s ", m_void ? "void" :
-                           tess_type_to_c(method->ret_type));
+            if (m_void) append_str(gen, "void ");
+            else { append_return_type(gen, method->ret_type); append_str(gen, " "); }
             append_ident(gen, cls->name);
             append_str(gen, "_");
             append_ident(gen, method->name);
@@ -1707,6 +2372,19 @@ static void c99_codegen_generate_classes(c99_codegen *gen, tess_program *program
 static void c99_codegen_generate_main(c99_codegen *gen, tess_program *program) {
     if (!gen || !program) return;
 
+    if (gen->freestanding) {
+        for (size_t i = 0; i < program->count; i++) {
+            tess_stmt *st = program->items[i];
+            if (st && st->kind != TESS_STMT_FN && st->kind != TESS_STMT_CLASS &&
+                st->kind != TESS_STMT_RECORD && st->kind != TESS_STMT_IMPORT &&
+                st->kind != TESS_STMT_LINK) {
+                gen->failed = true;
+                return;
+            }
+        }
+        return;
+    }
+
     reset_function_state(gen);
     gen->current_class = NULL;
 
@@ -1718,16 +2396,37 @@ static void c99_codegen_generate_main(c99_codegen *gen, tess_program *program) {
     append_indent(gen);
     append_str(gen, "(void)argv;\n\n");
 
-    for (size_t i = 0; i < program->count; i++) {
-        tess_stmt *stmt = program->items[i];
-        if (stmt && stmt->kind != TESS_STMT_CLASS) {
-            c99_codegen_stmt(gen, stmt);
+    if (has_language_main(gen)) {
+        tess_stmt *entry = NULL;
+        for (size_t i = 0; i < program->count; i++) {
+            tess_stmt *stmt = program->items[i];
+            if (stmt != NULL && stmt->kind == TESS_STMT_FN &&
+                stmt->as.fn.name != NULL &&
+                strcmp(stmt->as.fn.name, "main") == 0) {
+                entry = stmt;
+                break;
+            }
         }
+        append_indent(gen);
+        if (entry != NULL && entry->as.fn.ret_type != NULL &&
+            strcmp(entry->as.fn.ret_type, "null") != 0) {
+            append_str(gen, "return terra_user_main();\n");
+        } else {
+            append_str(gen, "terra_user_main();\n");
+            append_indent(gen);
+            append_str(gen, "return 0;\n");
+        }
+    } else {
+        for (size_t i = 0; i < program->count; i++) {
+            tess_stmt *stmt = program->items[i];
+            if (stmt && stmt->kind != TESS_STMT_CLASS) {
+                c99_codegen_stmt(gen, stmt);
+            }
+        }
+        append_str(gen, "\n");
+        append_indent(gen);
+        append_str(gen, "return 0;\n");
     }
-
-    append_str(gen, "\n");
-    append_indent(gen);
-    append_str(gen, "return 0;\n");
     gen->indent_level--;
     append_indent(gen);
     append_str(gen, "}\n");
@@ -1751,6 +2450,7 @@ bool c99_codegen_init(c99_codegen *gen, size_t initial_capacity) {
     gen->declared_cap = 0;
     gen->var_names = NULL;
     gen->var_classes = NULL;
+    gen->var_element_types = NULL;
     gen->var_count = 0;
     gen->var_cap = 0;
     gen->module_aliases = NULL;
@@ -1781,8 +2481,10 @@ void c99_codegen_destroy(c99_codegen *gen) {
      * themselves are owned here. */
     free(gen->var_names);
     free(gen->var_classes);
+    free(gen->var_element_types);
     gen->var_names = NULL;
     gen->var_classes = NULL;
+    gen->var_element_types = NULL;
     gen->var_count = 0;
     gen->var_cap = 0;
     for (size_t i = 0; i < gen->module_alias_count; i++) {
@@ -1804,12 +2506,45 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
     if (!gen) return;
 
     append_str(gen, "/* Terra Runtime Library */\n");
+    if (gen->freestanding) {
+        append_str(gen, "#include <stdbool.h>\n#include <stdint.h>\n#include <stddef.h>\n\n");
+        if (gen->program != NULL) {
+            for (size_t i = 0; i < gen->program->count; i++) {
+                tess_stmt *st = gen->program->items[i];
+                if (st == NULL || st->kind != TESS_STMT_IMPORT ||
+                    st->as.import.module == NULL ||
+                    strcmp(st->as.import.module, "c") != 0 ||
+                    !safe_header_name(st->as.import.path)) continue;
+                append_str(gen, "#include <"); append_str(gen, st->as.import.path);
+                append_str(gen, ">\n");
+            }
+            append_str(gen, "\n");
+        }
+        append_str(gen, "typedef struct { void *data; size_t len; } terra_slice;\n\n");
+        return;
+    }
     append_str(gen, "#include <stdio.h>\n");
     append_str(gen, "#include <stdlib.h>\n");
     append_str(gen, "#include <string.h>\n");
     append_str(gen, "#include <stdbool.h>\n");
-    append_str(gen, "#include <stdint.h>\n#include <math.h>\n\n");
+    append_str(gen, "#include <stdint.h>\n#include <stddef.h>\n#include <math.h>\n\n");
+    /* Imports add only quoted, validated system header names. Include them in
+     * the generated translation unit so the C compiler type-checks FFI calls. */
+    if (gen->program != NULL) {
+        for (size_t i = 0; i < gen->program->count; i++) {
+            tess_stmt *st = gen->program->items[i];
+            if (st == NULL || st->kind != TESS_STMT_IMPORT ||
+                st->as.import.module == NULL ||
+                strcmp(st->as.import.module, "c") != 0 ||
+                !safe_header_name(st->as.import.path)) continue;
+            append_str(gen, "#include <");
+            append_str(gen, st->as.import.path);
+            append_str(gen, ">\n");
+        }
+        append_str(gen, "\n");
+    }
     append_str(gen, "#include <errno.h>\n#include <limits.h>\n\n");
+    append_str(gen, "typedef struct { void *data; size_t len; } terra_slice;\n\n");
     /* Class init helpers may legitimately end up unused in a given program;
      * keep them out of -Wunused-function's way without dropping `static`. */
     append_str(gen,
@@ -1907,6 +2642,19 @@ static bool prepend_runtime_block(c99_codegen *gen) {
         return false;
     }
     rt.runtime_used = gen->runtime_used;
+    rt.program = gen->program;
+    rt.freestanding = gen->freestanding;
+    if (rt.freestanding) {
+        bool has_class = false;
+        for (size_t i = 0; i < gen->program->count; i++)
+            if (gen->program->items[i] && gen->program->items[i]->kind == TESS_STMT_CLASS)
+                has_class = true;
+        if (has_class || rt.runtime_used != 0) {
+            gen->failed = true;
+            c99_codegen_destroy(&rt);
+            return false;
+        }
+    }
     c99_codegen_print_runtime_info(&rt);
 
     bool ok = !rt.failed && !gen->failed;
@@ -1983,6 +2731,10 @@ static char *c99_codegen_run(c99_codegen *gen, tess_program *program) {
 }
 
 char *c99_codegen_generate(tess_program *program) {
+    return c99_codegen_generate_mode(program, false);
+}
+
+char *c99_codegen_generate_mode(tess_program *program, bool freestanding) {
     if (!program) {
         return NULL;
     }
@@ -1992,6 +2744,7 @@ char *c99_codegen_generate(tess_program *program) {
         return NULL;
     }
     gen.program = program;
+    gen.freestanding = freestanding;
     c99_codegen_collect_modules(&gen, program);
 
     char *result = c99_codegen_run(&gen, program);

@@ -25,10 +25,15 @@ typedef enum {
     TYPE_BOOL,      /* boolean                                      */
     TYPE_NULL,      /* null                                         */
     TYPE_CLASS,     /* class instance (class name provided)         */
+    TYPE_POINTER,
+    TYPE_SLICE,
+    TYPE_RECORD,
 } tess_type;
 
 typedef struct {
     const char *name;   /* NULL -> empty slot                         */
+    const char *record_name;
+    const char *array_type;
     sym_kind    kind;
     tess_type   type;
     union {
@@ -74,6 +79,7 @@ typedef struct {
     char *ret_type;
     char **param_types;   /* one Tesseract type name per parameter */
     size_t param_count;
+    bool variadic;
 } tess_fn_entry;
 
 typedef struct {
@@ -90,6 +96,41 @@ static uint32_t fnv1a(const char *s) {
         h *= 16777619u;
     }
     return h;
+}
+
+/* Header names are emitted into a preprocessor directive. Keep them to a
+ * conservative portable subset and reject traversal, quotes, whitespace,
+ * and control bytes so source text cannot inject another directive. */
+static bool safe_c_header(const char *header) {
+    if (header == NULL || header[0] == '\0' || header[0] == '/') return false;
+    size_t segment = 0;
+    for (size_t i = 0;; i++) {
+        unsigned char c = (unsigned char)header[i];
+        if (c == '/' || c == '\0') {
+            size_t n = i - segment;
+            if (n == 0 || (n == 1 && header[segment] == '.') ||
+                (n == 2 && header[segment] == '.' && header[segment + 1] == '.'))
+                return false;
+            if (c == '\0') return true;
+            segment = i + 1;
+            continue;
+        }
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' ||
+              c == '+')) return false;
+    }
+}
+
+static bool safe_library_name(const char *library) {
+    if (library == NULL || library[0] == '\0') return false;
+    for (size_t i = 0; library[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)library[i];
+        bool alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        bool digit = c >= '0' && c <= '9';
+        if (!(alpha || digit || c == '_' || (i > 0 && (c == '+' || c == '-'))))
+            return false;
+    }
+    return true;
 }
 
 static bool scope_init(tess_scope *sc) {
@@ -180,6 +221,8 @@ static bool scope_define(tess_scope *sc, const char *name, sym_kind kind,
         sym_entry *e = &sc->table[(idx + i) & mask];
         if (e->name == NULL) {
             e->name  = name;
+            e->record_name = NULL;
+            e->array_type = NULL;
             e->kind  = kind;
             e->type  = type;
             if (kind == SYM_CLASS || (kind == SYM_VAR && type == TYPE_CLASS)) {
@@ -203,6 +246,7 @@ static bool scope_define(tess_scope *sc, const char *name, sym_kind kind,
  * ------------------------------------------------------------------------- */
 
 typedef struct {
+    tess_program *program;
     const char  *src;
     const char  *path;
     bool         failed;
@@ -212,6 +256,7 @@ typedef struct {
     /* Enclosing fn/method, for return-type validation. */
     tess_stmt   *current_fn;
     tess_method *current_method;
+    size_t       loop_depth;
     /* Imported module aliases: local alias -> module key. */
     tess_module_table modules;
     tess_fn_table fns;
@@ -329,7 +374,7 @@ static const char *module_table_find(tess_module_table *t, const char *alias) {
 /* Function table: module-qualified or top-level functions. */
 static bool fn_table_add(tess_fn_table *t, const char *module, const char *name,
                         const char *ret_type, tess_param *params,
-                        size_t param_count) {
+                        size_t param_count, bool variadic) {
     if (name == NULL) return false;
     /* Names only collide within the same module namespace. */
     for (size_t i = 0; i < t->count; i++) {
@@ -386,6 +431,7 @@ static bool fn_table_add(tess_fn_table *t, const char *module, const char *name,
     t->items[t->count].ret_type = r;
     t->items[t->count].param_types = pt;
     t->items[t->count].param_count = param_count;
+    t->items[t->count].variadic = variadic;
     t->count++;
     return true;
 }
@@ -433,6 +479,92 @@ static void fn_table_destroy(tess_fn_table *t) {
  * Type checking helpers
  * ------------------------------------------------------------------------- */
 
+static tess_record *record_decl_find(tess_sema *s, const char *name) {
+    if (s == NULL || name == NULL) return NULL;
+    for (size_t i = 0; i < s->program->count; i++) {
+        tess_stmt *st = s->program->items[i];
+        if (st && st->kind == TESS_STMT_RECORD && st->as.record_decl &&
+            strcmp(st->as.record_decl->name, name) == 0) return st->as.record_decl;
+    }
+    return NULL;
+}
+
+static const char *record_type_name(tess_sema *s, const char *type) {
+    if (type == NULL) return NULL;
+    if (strncmp(type, "volatile ", 9) == 0) type += 9;
+    size_t n = strcspn(type, "*[");
+    if (n == strlen(type)) return record_decl_find(s, type) ? type : NULL;
+    if (n == 0 || n >= 128) return NULL;
+    char base[128];
+    memcpy(base, type, n); base[n] = '\0';
+    if (!record_decl_find(s, base)) return NULL;
+    return tess_arena_strndup(&s->program->arena, base, n);
+}
+
+static const char *record_name_of_expr(tess_sema *s, tess_expr *e) {
+    if (e == NULL) return NULL;
+    if (e->kind == TESS_EXPR_RECORD_INIT) return e->as.record_init.type_name;
+    if (e->kind == TESS_EXPR_IDENT) {
+        sym_entry *sym = scope_lookup(s->scope, e->as.ident);
+        return sym != NULL ? sym->record_name : NULL;
+    }
+    if (e->kind == TESS_EXPR_MEMBER) {
+        tess_record *record = record_decl_find(s,
+            record_name_of_expr(s, e->as.member.object));
+        if (record != NULL) {
+            for (size_t i = 0; i < record->field_count; i++)
+                if (strcmp(record->fields[i].name, e->as.member.name) == 0 &&
+                    record_decl_find(s, record->fields[i].type) != NULL)
+                    return record->fields[i].type;
+        }
+    }
+    if (e->kind == TESS_EXPR_CALL && e->as.call.callee != NULL &&
+        e->as.call.callee->kind == TESS_EXPR_IDENT) {
+        tess_fn_entry *fn = fn_table_find(&s->fns, NULL,
+            e->as.call.callee->as.ident);
+        if (fn != NULL) return record_type_name(s, fn->ret_type);
+    }
+    return NULL;
+}
+
+static const char *array_type_of_expr(tess_sema *s, tess_expr *e) {
+    if (e == NULL) return NULL;
+    if (e->kind == TESS_EXPR_IDENT) {
+        sym_entry *sym = scope_lookup(s->scope, e->as.ident);
+        return sym != NULL ? sym->array_type : NULL;
+    }
+    if (e->kind == TESS_EXPR_INDEX) {
+        const char *source = array_type_of_expr(s, e->as.index.object);
+        if (source == NULL) return NULL;
+        const char *open = strchr(source, '[');
+        const char *close = open != NULL ? strchr(open, ']') : NULL;
+        if (close == NULL) return NULL;
+        const char *next = close + 1;
+        if (*next == '\0') return NULL;
+        size_t prefix = (size_t)(open - source);
+        size_t suffix = strlen(next);
+        char *remaining = tess_arena_alloc(&s->program->arena, prefix + suffix + 1);
+        if (remaining == NULL) return NULL;
+        memcpy(remaining, source, prefix);
+        memcpy(remaining + prefix, next, suffix + 1);
+        return remaining;
+    }
+    if (e->kind == TESS_EXPR_MEMBER) {
+        tess_class *cls = receiver_class(s, e->as.member.object);
+        if (cls != NULL) {
+            tess_field *field = class_find_field(cls, e->as.member.name);
+            if (field != NULL && strchr(field->type, '[') != NULL) return field->type;
+        }
+        tess_record *record = record_decl_find(s,
+            record_name_of_expr(s, e->as.member.object));
+        if (record != NULL) for (size_t i = 0; i < record->field_count; i++)
+            if (strcmp(record->fields[i].name, e->as.member.name) == 0 &&
+                strchr(record->fields[i].type, '[') != NULL)
+                return record->fields[i].type;
+    }
+    return NULL;
+}
+
 static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
     if (e == NULL) return TYPE_INT; // Default fallback
     
@@ -443,6 +575,31 @@ static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
             return TYPE_FLOAT;
         case TESS_EXPR_STRING:
             return TYPE_STR;
+        case TESS_EXPR_ARRAY:
+        case TESS_EXPR_SLICE:
+            return TYPE_SLICE;
+        case TESS_EXPR_INDEX: {
+            const char *source = array_type_of_expr(s, e->as.index.object);
+            if (source != NULL) {
+                const char *open = strchr(source, '[');
+                if (open != NULL) {
+                    const char *close = strchr(open, ']');
+                    if (close != NULL && close[1] != '\0') return TYPE_SLICE;
+                    size_t n = (size_t)(open - source);
+                    char base[128];
+                    if (n >= sizeof base) n = sizeof base - 1;
+                    memcpy(base, source, n); base[n] = '\0';
+                    return type_from_name(s, base, NULL);
+                }
+            }
+            if (e->as.index.object != NULL && e->as.index.object->kind == TESS_EXPR_ARRAY &&
+                e->as.index.object->as.array.count != 0 &&
+                e->as.index.object->as.array.items[0]->kind == TESS_EXPR_ARRAY)
+                return TYPE_SLICE;
+            return TYPE_INT;
+        }
+        case TESS_EXPR_RECORD_INIT:
+            return TYPE_RECORD;
         case TESS_EXPR_BOOL:
             return TYPE_BOOL;
         case TESS_EXPR_NULL:
@@ -469,6 +626,13 @@ static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
                     if (m->ret_type == NULL) return TYPE_NULL;
                     return type_from_name(s, m->ret_type, NULL);
                 }
+            }
+            const char *record_name = record_name_of_expr(s, e->as.member.object);
+            tess_record *record = record_decl_find(s, record_name);
+            if (record != NULL) {
+                for (size_t i = 0; i < record->field_count; i++)
+                    if (strcmp(record->fields[i].name, e->as.member.name) == 0)
+                        return type_from_name(s, record->fields[i].type, NULL);
             }
             return TYPE_NULL;
         }
@@ -508,6 +672,11 @@ static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
             tess_binary_op op = e->as.binary.op;
             tess_type lhs = infer_expr_type(s, e->as.binary.lhs);
             tess_type rhs = infer_expr_type(s, e->as.binary.rhs);
+
+            if ((op == TESS_BIN_ADD || op == TESS_BIN_SUB) &&
+                lhs == TYPE_POINTER && rhs == TYPE_INT) return TYPE_POINTER;
+            if (op == TESS_BIN_ADD && rhs == TYPE_POINTER && lhs == TYPE_INT)
+                return TYPE_POINTER;
             
             /* Comparison operators always return bool */
             if (op >= TESS_BIN_EQ && op <= TESS_BIN_GE) {
@@ -538,6 +707,8 @@ static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
             return TYPE_INT; // Default
         }
         case TESS_EXPR_UNARY: {
+            if (e->as.unary.op == TESS_UN_ADDRESS) return TYPE_POINTER;
+            if (e->as.unary.op == TESS_UN_DEREFERENCE) return TYPE_INT;
             /* Logical NOT always returns bool, regardless of operand type */
             if (e->as.unary.op == TESS_UN_NOT) {
                 return TYPE_BOOL;
@@ -588,33 +759,83 @@ static bool types_compatible(tess_type a, tess_type b) {
 }
 
 /* Map a Tesseract type name to the internal type, resolving class names. */
+static bool is_c_integer_type(const char *name) {
+    static const char *const names[] = {
+        "int", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64",
+        "usize", "isize", "c_char", "c_schar", "c_uchar", "c_short",
+        "c_ushort", "c_int", "c_uint", "c_long", "c_ulong",
+        "c_longlong", "c_ulonglong", "size_t", "ptrdiff_t"
+    };
+    if (name == NULL) return false;
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+        if (strcmp(name, names[i]) == 0) return true;
+    return false;
+}
+
 static tess_type type_from_name(tess_sema *s, const char *name,
                                 tess_class **out_cls) {
     if (out_cls != NULL) *out_cls = NULL;
     if (name == NULL) return TYPE_INT; /* legacy default for untyped params */
+    if (strncmp(name, "volatile ", 9) == 0) name += 9;
+    if (strchr(name, '*') != NULL) return TYPE_POINTER;
+    if (strchr(name, '[') != NULL) return TYPE_SLICE;
+    char base_name[128];
+    size_t base_len = strcspn(name, "*[");
+    if (base_len < sizeof base_name && name[base_len] != '\0') {
+        memcpy(base_name, name, base_len); base_name[base_len] = '\0';
+        name = base_name;
+    }
 
-    if (strcmp(name, "int") == 0 || strcmp(name, "i32") == 0) return TYPE_INT;
+    if (is_c_integer_type(name)) return TYPE_INT;
     if (strcmp(name, "float") == 0 || strcmp(name, "f64") == 0) return TYPE_FLOAT;
+    if (strcmp(name, "c_float") == 0 || strcmp(name, "c_double") == 0)
+        return TYPE_FLOAT;
     if (strcmp(name, "str") == 0 || strcmp(name, "string") == 0) return TYPE_STR;
+    if (strcmp(name, "slice") == 0 || strcmp(name, "terra_slice") == 0) return TYPE_SLICE;
     if (strcmp(name, "bool") == 0 || strcmp(name, "boolean") == 0) return TYPE_BOOL;
-    if (strcmp(name, "null") == 0 || strcmp(name, "None") == 0) return TYPE_NULL;
+    if (strcmp(name, "c_bool") == 0) return TYPE_BOOL;
+    if (strcmp(name, "ptr") == 0) return TYPE_POINTER;
+    if (strcmp(name, "null") == 0 || strcmp(name, "None") == 0 ||
+        strcmp(name, "void") == 0 ||
+        strcmp(name, "c_void") == 0) return TYPE_NULL;
 
     sym_entry *sym = scope_lookup(s->scope, name);
     if (sym != NULL && sym->kind == SYM_CLASS) {
         if (out_cls != NULL) *out_cls = sym->as.cls;
         return TYPE_CLASS;
     }
+    for (size_t i = 0; i < s->program->count; i++) {
+        tess_stmt *st = s->program->items[i];
+        if (st && st->kind == TESS_STMT_RECORD && st->as.record_decl &&
+            strcmp(st->as.record_decl->name, name) == 0) return TYPE_RECORD;
+    }
     return TYPE_NULL;
 }
 
 static bool type_name_known(tess_sema *s, const char *name) {
     if (name == NULL) return false;
-    if (strcmp(name, "int") == 0 || strcmp(name, "i32") == 0 ||
+    if (strncmp(name, "volatile ", 9) == 0) name += 9;
+    char base_name[128];
+    size_t base_len = strcspn(name, "*[");
+    if (base_len < sizeof base_name && name[base_len] != '\0') {
+        memcpy(base_name, name, base_len); base_name[base_len] = '\0';
+        name = base_name;
+    }
+    if (is_c_integer_type(name) ||
         strcmp(name, "float") == 0 || strcmp(name, "f64") == 0 ||
+        strcmp(name, "c_float") == 0 || strcmp(name, "c_double") == 0 ||
         strcmp(name, "str") == 0 || strcmp(name, "string") == 0 ||
+        strcmp(name, "slice") == 0 || strcmp(name, "terra_slice") == 0 ||
         strcmp(name, "bool") == 0 || strcmp(name, "boolean") == 0 ||
-        strcmp(name, "null") == 0 || strcmp(name, "None") == 0) {
+        strcmp(name, "null") == 0 || strcmp(name, "None") == 0 ||
+        strcmp(name, "ptr") == 0 || strcmp(name, "c_void") == 0 ||
+        strcmp(name, "c_bool") == 0) {
         return true;
+    }
+    for (size_t i = 0; i < s->program->count; i++) {
+        tess_stmt *st = s->program->items[i];
+        if (st && st->kind == TESS_STMT_RECORD && st->as.record_decl &&
+            strcmp(st->as.record_decl->name, name) == 0) return true;
     }
     sym_entry *sym = scope_lookup(s->scope, name);
     return sym != NULL && sym->kind == SYM_CLASS;
@@ -679,7 +900,7 @@ static bool can_assign(tess_type target, tess_type value) {
     }
     /* null is assignable to reference-like types */
     if (value == TYPE_NULL &&
-        (target == TYPE_CLASS || target == TYPE_STR)) {
+        (target == TYPE_CLASS || target == TYPE_STR || target == TYPE_POINTER)) {
         return true;
     }
     return false;
@@ -692,6 +913,9 @@ static const char *type_label(tess_type t) {
         case TYPE_STR: return "str";
         case TYPE_BOOL: return "bool";
         case TYPE_NULL: return "null";
+        case TYPE_POINTER: return "pointer";
+        case TYPE_SLICE: return "slice";
+        case TYPE_RECORD: return "record";
         case TYPE_CLASS: return "class";
     }
     return "unknown";
@@ -733,7 +957,8 @@ static bool check_method_args(tess_sema *s, tess_expr *call,
 
 static bool is_lvalue(tess_expr *e) {
     return e != NULL && (e->kind == TESS_EXPR_IDENT ||
-                         e->kind == TESS_EXPR_MEMBER);
+                         e->kind == TESS_EXPR_MEMBER || e->kind == TESS_EXPR_INDEX ||
+                         (e->kind == TESS_EXPR_UNARY && e->as.unary.op == TESS_UN_DEREFERENCE));
 }
 
 /* -------------------------------------------------------------------------
@@ -838,6 +1063,123 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                         report(s, e->start, e->end, msg);
                         return false;
                     }
+                }
+            }
+            const char *record_name = record_name_of_expr(s, obj);
+            tess_record *record = record_decl_find(s, record_name);
+            if (record != NULL) {
+                bool found = false;
+                for (size_t i = 0; i < record->field_count; i++)
+                    if (strcmp(record->fields[i].name, member) == 0) found = true;
+                if (!found) {
+                    char msg[256];
+                    snprintf(msg, sizeof msg, "struct or union `%s` has no field `%s`",
+                             record->name, member);
+                    report(s, e->start, e->end, msg);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        case TESS_EXPR_INDEX: {
+            if (!check_expr(s, e->as.index.object) ||
+                !check_expr(s, e->as.index.index)) return false;
+            if (infer_expr_type(s, e->as.index.index) != TYPE_INT) {
+                report(s, e->as.index.index->start, e->as.index.index->end,
+                       "array and pointer index must be an integer");
+                return false;
+            }
+            tess_type object_type = infer_expr_type(s, e->as.index.object);
+            if (object_type != TYPE_SLICE && object_type != TYPE_POINTER &&
+                object_type != TYPE_STR) {
+                report(s, e->start, e->end,
+                       "indexing requires an array, slice, string, or pointer");
+                return false;
+            }
+            return true;
+        }
+        case TESS_EXPR_ARRAY:
+            for (size_t i = 0; i < e->as.array.count; i++) {
+                if (!check_expr(s, e->as.array.items[i])) return false;
+                if (i > 0) {
+                    tess_type first = infer_expr_type(s, e->as.array.items[0]);
+                    tess_type current = infer_expr_type(s, e->as.array.items[i]);
+                    if (!types_compatible(first, current)) {
+                        report(s, e->as.array.items[i]->start,
+                               e->as.array.items[i]->end,
+                               "array literal elements must have compatible types");
+                        return false;
+                    }
+                }
+            }
+            return true;
+        case TESS_EXPR_SLICE: {
+            if (!check_expr(s, e->as.slice.object)) return false;
+            if (e->as.slice.start != NULL) {
+                if (!check_expr(s, e->as.slice.start)) return false;
+                if (infer_expr_type(s, e->as.slice.start) != TYPE_INT) {
+                    report(s, e->as.slice.start->start, e->as.slice.start->end,
+                           "slice bounds must be integers");
+                    return false;
+                }
+            }
+            if (e->as.slice.end != NULL) {
+                if (!check_expr(s, e->as.slice.end)) return false;
+                if (infer_expr_type(s, e->as.slice.end) != TYPE_INT) {
+                    report(s, e->as.slice.end->start, e->as.slice.end->end,
+                           "slice bounds must be integers");
+                    return false;
+                }
+            }
+            tess_type object_type = infer_expr_type(s, e->as.slice.object);
+            if (object_type != TYPE_SLICE && object_type != TYPE_POINTER) {
+                report(s, e->start, e->end,
+                       "slicing requires an array, slice, or pointer");
+                return false;
+            }
+            return true;
+        }
+        case TESS_EXPR_RECORD_INIT: {
+            tess_record *record = NULL;
+            for (size_t i = 0; i < s->program->count; i++) {
+                tess_stmt *st = s->program->items[i];
+                if (st && st->kind == TESS_STMT_RECORD && st->as.record_decl &&
+                    strcmp(st->as.record_decl->name, e->as.record_init.type_name) == 0) {
+                    record = st->as.record_decl; break;
+                }
+            }
+            if (record == NULL) {
+                report(s, e->start, e->end, "record initializer names an unknown struct or union");
+                return false;
+            }
+            if (record->is_union && e->as.record_init.count > 1) {
+                report(s, e->start, e->end, "union initializer may initialize only one field");
+                return false;
+            }
+            for (size_t i = 0; i < e->as.record_init.count; i++) {
+                tess_field *field = NULL;
+                for (size_t j = 0; j < record->field_count; j++)
+                    if (strcmp(record->fields[j].name, e->as.record_init.names[i]) == 0)
+                        field = &record->fields[j];
+                if (field == NULL) {
+                    report(s, e->start, e->end, "initializer names an unknown record field");
+                    return false;
+                }
+                for (size_t j = 0; j < i; j++) {
+                    if (strcmp(e->as.record_init.names[i],
+                               e->as.record_init.names[j]) == 0) {
+                        report(s, e->start, e->end,
+                               "record field appears more than once in initializer");
+                        return false;
+                    }
+                }
+                if (!check_expr(s, e->as.record_init.values[i])) return false;
+                tess_type want = type_from_name(s, field->type, NULL);
+                tess_type got = infer_expr_type(s, e->as.record_init.values[i]);
+                if (!can_assign(want, got) && got != TYPE_NULL) {
+                    report(s, e->start, e->end, "record field initializer has incompatible type");
+                    return false;
                 }
             }
             return true;
@@ -1077,8 +1419,13 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                 
                 /* String addition allowed */
                 bool string_add = (lhs_type == TYPE_STR && rhs_type == TYPE_STR);
+                bool pointer_step = (op == TESS_BIN_ADD || op == TESS_BIN_SUB) &&
+                    ((lhs_type == TYPE_POINTER && rhs_type == TYPE_INT) ||
+                     (op == TESS_BIN_ADD && rhs_type == TYPE_POINTER && lhs_type == TYPE_INT));
+                bool pointer_difference = op == TESS_BIN_SUB &&
+                    lhs_type == TYPE_POINTER && rhs_type == TYPE_POINTER;
                 
-                if (!((lhs_numeric && rhs_numeric) || string_add)) {
+                if (!((lhs_numeric && rhs_numeric) || string_add || pointer_step || pointer_difference)) {
                     char msg[256];
                     const char *lt = "unknown", *rt = "unknown";
                     switch (lhs_type) { case TYPE_INT: lt = "int"; break; case TYPE_FLOAT: lt = "float"; break; case TYPE_STR: lt = "str"; break; case TYPE_BOOL: lt = "bool"; break; default: break; }
@@ -1107,6 +1454,12 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
         }
 
         case TESS_EXPR_UNARY: {
+            if (e->as.unary.op == TESS_UN_ADDRESS && !is_lvalue(e->as.unary.operand)) {
+                report(s, e->start, e->end, "address-of requires an assignable expression");
+                return false;
+            }
+            if ((e->as.unary.op == TESS_UN_ADDRESS || e->as.unary.op == TESS_UN_DEREFERENCE) &&
+                !check_expr(s, e->as.unary.operand)) return false;
             if (e->as.unary.operand == NULL) {
                 report(s, e->start, e->end, "invalid unary expression");
                 return false;
@@ -1198,13 +1551,15 @@ static bool check_fn_call(tess_sema *s, tess_expr *callee, size_t argc,
     if (name == NULL) return true;
     tess_fn_entry *fn = fn_table_find(&s->fns, module, name);
     if (fn == NULL) return true;
-    if (fn->param_count != argc) {
+    if ((!fn->variadic && fn->param_count != argc) ||
+        (fn->variadic && argc < fn->param_count)) {
         report(s, callee->start, callee->end,
                "wrong number of arguments to function");
         return false;
     }
     /* Argument types are validated against the declared parameter types. */
-    for (size_t i = 0; i < argc; i++) {
+    size_t checked_args = argc < fn->param_count ? argc : fn->param_count;
+    for (size_t i = 0; i < checked_args; i++) {
         const char *want_name = fn->param_types != NULL
             ? fn->param_types[i] : NULL;
         if (want_name == NULL) continue;
@@ -1254,6 +1609,11 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
             /* Built-in functions and class names are not variables. */
             if (target->kind == TESS_EXPR_IDENT) {
                 sym_entry *existing = scope_lookup(s->scope, target->as.ident);
+                if (fn_table_find(&s->fns, NULL, target->as.ident) != NULL) {
+                    report(s, target->start, target->end,
+                           "cannot assign to a function name");
+                    return false;
+                }
                 if (existing != NULL && existing->kind != SYM_VAR) {
                     char msg[256];
                     snprintf(msg, sizeof msg,
@@ -1311,7 +1671,48 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                 /* Declare the variable if this is its first assignment
                  * (Tesseract uses assign-to-declare). */
                 sym_entry *visible = scope_lookup(s->scope, target->as.ident);
-                if (visible == NULL || visible->kind != SYM_VAR) {
+                if (st->as.assign.declaration) {
+                    if (visible != NULL) {
+                        report(s, target->start, target->end,
+                               "variable is already declared");
+                        return false;
+                    }
+                    if (st->as.assign.declared_type &&
+                        !type_name_known(s, st->as.assign.declared_type)) {
+                        report(s, st->start, st->end, "unknown declared variable type");
+                        return false;
+                    }
+                    tess_type var_type = st->as.assign.declared_type
+                        ? type_from_name(s, st->as.assign.declared_type, NULL)
+                        : infer_expr_type(s, value);
+                    tess_type init_type = infer_expr_type(s, value);
+                    if (st->as.assign.declared_type &&
+                        !can_assign(var_type, init_type) && init_type != TYPE_NULL) {
+                        report(s, st->start, st->end,
+                               "initializer is incompatible with declared variable type");
+                        return false;
+                    }
+                    tess_class *var_cls = class_from_construction(s, value);
+                    if (var_type == TYPE_NULL) {
+                        var_type = var_cls != NULL ? TYPE_CLASS : TYPE_INT;
+                    }
+                    if (!scope_define(s->scope, target->as.ident, SYM_VAR,
+                                      var_type, var_cls, -1, false)) {
+                        report(s, target->start, target->end,
+                               "out of memory while declaring variable");
+                        return false;
+                    }
+                    const char *record_name = st->as.assign.declared_type
+                        ? record_type_name(s, st->as.assign.declared_type)
+                        : record_name_of_expr(s, value);
+                    if (record_name != NULL)
+                        scope_lookup_own(s->scope, target->as.ident)->record_name = record_name;
+                    if (st->as.assign.declared_type != NULL &&
+                        strchr(st->as.assign.declared_type, '[') != NULL &&
+                        strncmp(st->as.assign.declared_type, "slice[", 6) != 0)
+                        scope_lookup_own(s->scope, target->as.ident)->array_type =
+                            st->as.assign.declared_type;
+                } else if (visible == NULL || visible->kind != SYM_VAR) {
                     tess_type var_type = infer_expr_type(s, value);
                     tess_class *var_cls = NULL;
 
@@ -1326,6 +1727,9 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                                "out of memory while declaring variable");
                         return false;
                     }
+                    const char *record_name = record_name_of_expr(s, value);
+                    if (record_name != NULL)
+                        scope_lookup_own(s->scope, target->as.ident)->record_name = record_name;
                 } else {
                     /* Existing variable: enforce assignment compatibility. */
                     tess_type target_type = infer_expr_type(s, target);
@@ -1401,6 +1805,35 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
             return true;
         }
 
+        case TESS_STMT_FOR: {
+            tess_scope loop_scope;
+            if (!push_scope(s, &loop_scope, false)) {
+                report(s, st->start, st->end,
+                       "out of memory while analysing loop scope");
+                return false;
+            }
+            bool ok = check_stmt(s, st->as.for_stmt.init);
+            if (ok && st->as.for_stmt.condition != NULL) {
+                ok = check_expr(s, st->as.for_stmt.condition);
+                if (ok && infer_expr_type(s, st->as.for_stmt.condition) !=
+                              TYPE_BOOL) {
+                    report(s, st->as.for_stmt.condition->start,
+                           st->as.for_stmt.condition->end,
+                           "for condition must be bool");
+                    ok = false;
+                }
+            }
+            if (ok) {
+                s->loop_depth++;
+                ok = check_stmt(s, st->as.for_stmt.body);
+                s->loop_depth--;
+            }
+            if (ok && st->as.for_stmt.step != NULL)
+                ok = check_expr(s, st->as.for_stmt.step);
+            pop_scope(s);
+            return ok;
+        }
+
         case TESS_STMT_WHILE: {
             if (!check_expr(s, st->as.while_stmt.cond)) return false;
             
@@ -1420,10 +1853,23 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                 report(s, st->start, st->end, "out of memory while analysing scope");
                 return false;
             }
+            s->loop_depth++;
             bool ok = check_stmt(s, st->as.while_stmt.body);
+            s->loop_depth--;
             pop_scope(s);
             return ok;
         }
+
+        case TESS_STMT_BREAK:
+        case TESS_STMT_CONTINUE:
+            if (s->loop_depth == 0) {
+                report(s, st->start, st->end,
+                       st->kind == TESS_STMT_BREAK
+                           ? "`break` is only valid inside a loop"
+                           : "`continue` is only valid inside a loop");
+                return false;
+            }
+            return true;
 
         case TESS_STMT_RETURN: {
             /* Search enclosing scopes so returns remain valid inside nested
@@ -1494,6 +1940,11 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
 
         case TESS_STMT_CLASS: {
             tess_class *cls = st->as.class_decl;
+            if (record_decl_find(s, cls->name) != NULL) {
+                report(s, st->start, st->end,
+                       "class name conflicts with a struct or union name");
+                return false;
+            }
 
             /* Field types must name a primitive or a known class. */
             for (size_t i = 0; i < cls->field_count; i++) {
@@ -1604,6 +2055,12 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                         s->current_class = saved_class;
                         return false;
                     }
+                    const char *record_name = record_type_name(s, m->params[j].type);
+                    if (record_name != NULL)
+                        scope_lookup_own(s->scope, m->params[j].name)->record_name = record_name;
+                    if (m->params[j].type != NULL && strchr(m->params[j].type, '[') != NULL)
+                        scope_lookup_own(s->scope, m->params[j].name)->array_type =
+                            m->params[j].type;
                 }
 
                 /* Fields are visible as bare names inside methods, carrying
@@ -1644,11 +2101,15 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                 report(s, st->start, st->end, "invalid module import");
                 return false;
             }
-            if (path != NULL) {
-                /* Parsing a path is useful for diagnostics/future linking,
-                 * but this implementation supports only built-in modules. */
+            if (path != NULL &&
+                (module == NULL || strcmp(module, "c") != 0)) {
                 report(s, st->start, st->end,
-                       "file imports are not supported by this compiler yet");
+                       "file imports are not supported; only C header imports are available");
+                return false;
+            }
+            if (path != NULL && !safe_c_header(path)) {
+                report(s, st->start, st->end,
+                       "C header must be a relative system header name without traversal");
                 return false;
             }
             const char *module_key = module;
@@ -1690,11 +2151,75 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
             return true;
         }
 
+        case TESS_STMT_RECORD: {
+            tess_record *record = st->as.record_decl;
+            if (s->scope->parent != NULL) {
+                report(s, st->start, st->end, "struct and union declarations are only allowed at top level");
+                return false;
+            }
+            for (size_t i = 0; i < s->program->count; i++) {
+                tess_stmt *prior = s->program->items[i];
+                if (prior == st) break;
+                const char *other = NULL;
+                if (prior && prior->kind == TESS_STMT_RECORD && prior->as.record_decl)
+                    other = prior->as.record_decl->name;
+                if (prior && prior->kind == TESS_STMT_CLASS && prior->as.class_decl)
+                    other = prior->as.class_decl->name;
+                if (other && strcmp(other, record->name) == 0) {
+                    report(s, st->start, st->end, "duplicate type name");
+                    return false;
+                }
+            }
+            for (size_t i = 0; i < record->field_count; i++) {
+                if (!type_name_known(s, record->fields[i].type)) {
+                    char msg[256];
+                    snprintf(msg, sizeof msg, "unknown field type `%s`", record->fields[i].type);
+                    report(s, record->fields[i].start, record->fields[i].end, msg);
+                    return false;
+                }
+                for (size_t j = 0; j < i; j++) {
+                    if (strcmp(record->fields[i].name, record->fields[j].name) == 0) {
+                        report(s, record->fields[i].start, record->fields[i].end,
+                               "duplicate field name in struct or union");
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        case TESS_STMT_LINK:
+            if (s->scope->parent != NULL) {
+                report(s, st->start, st->end,
+                       "link declarations are only allowed at top level");
+                return false;
+            }
+            if (!safe_library_name(st->as.link.library)) {
+                report(s, st->start, st->end,
+                       "invalid library name; use a simple linker name such as `sqlite3`");
+                return false;
+            }
+            return true;
+
+        case TESS_STMT_ASM:
+            return true;
+
         case TESS_STMT_FN: {
             const char *name = st->as.fn.name;
             if (name == NULL) {
                 report(s, st->start, st->end, "function without a name");
                 return false;
+            }
+            if (strcmp(name, "main") == 0) {
+                if (st->as.fn.external || st->as.fn.param_count != 0 ||
+                    (st->as.fn.ret_type != NULL &&
+                     strcmp(st->as.fn.ret_type, "int") != 0 &&
+                     strcmp(st->as.fn.ret_type, "i32") != 0 &&
+                     strcmp(st->as.fn.ret_type, "c_int") != 0)) {
+                    report(s, st->start, st->end,
+                           "`main` must be a Tesseract function with no parameters and an optional int return");
+                    return false;
+                }
             }
             for (size_t i = 0; i < st->as.fn.param_count; i++) {
                 for (size_t j = 0; j < i; j++) {
@@ -1705,6 +2230,18 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                         return false;
                     }
                 }
+            }
+            if (st->as.fn.external) {
+                for (size_t i = 0; i < st->as.fn.param_count; i++) {
+                    /* Unknown identifier types in extern signatures are
+                     * opaque C typedefs; the imported header validates them. */
+                    if (st->as.fn.params[i].type == NULL) {
+                        report(s, st->start, st->end,
+                               "missing type in extern function declaration");
+                        return false;
+                    }
+                }
+                return true;
             }
             if (st->as.fn.fn_body == NULL) return true;
             tess_scope fn_sc;
@@ -1734,6 +2271,11 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                     pop_scope(s);
                     return false;
                 }
+                const char *record_name = record_type_name(s, param->type);
+                if (record_name != NULL)
+                    scope_lookup_own(s->scope, param->name)->record_name = record_name;
+                if (param->type != NULL && strchr(param->type, '[') != NULL)
+                    scope_lookup_own(s->scope, param->name)->array_type = param->type;
             }
             if (st->as.fn.ret_type != NULL &&
                 !type_name_known(s, st->as.fn.ret_type)) {
@@ -1762,6 +2304,7 @@ bool tess_sema_check(tess_program *program, const char *src, const char *path) {
     if (program == NULL) return false;
 
     tess_sema s = {0};
+    s.program = program;
     s.src  = src  ? src  : "";
     s.path = path ? path : "<input>";
 
@@ -1826,7 +2369,8 @@ bool tess_sema_check(tess_program *program, const char *src, const char *path) {
         if (!s.failed && !fn_table_add(&s.fns, NULL, st->as.fn.name,
                                        st->as.fn.ret_type,
                                        st->as.fn.params,
-                                       st->as.fn.param_count))
+                                       st->as.fn.param_count,
+                                       st->as.fn.variadic))
             report(&s, st->start, st->end,
                    "out of memory while declaring function");
     }

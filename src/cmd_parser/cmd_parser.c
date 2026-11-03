@@ -48,8 +48,12 @@ cmd_data parse_cmd(int argc, char* argv[]) {
     data.action = HELP;
     data.path = NULL;
     data.output = NULL;
+    data.c_compiler = NULL;
+    data.target_triple = NULL;
     data.check_only = false;
     data.to_stdout = false;
+    data.compile = false;
+    data.freestanding = false;
     data.quiet = false;
 
     if (argc <= 1) {
@@ -97,6 +101,14 @@ cmd_data parse_cmd(int argc, char* argv[]) {
                 data.to_stdout = true;
                 continue;
             }
+            if (strcmp(arg, "--compile") == 0) {
+                data.compile = true;
+                continue;
+            }
+            if (strcmp(arg, "--freestanding") == 0) {
+                data.freestanding = true;
+                continue;
+            }
             if (strcmp(arg, "-b") == 0 || strcmp(arg, "--build") == 0) {
                 char *value = NULL;
                 if (!take_value(&i, argc, argv,
@@ -135,6 +147,39 @@ cmd_data parse_cmd(int argc, char* argv[]) {
                 }
                 continue;
             }
+            if (strcmp(arg, "--cc") == 0) {
+                char *value = NULL;
+                if (!take_value(&i, argc, argv, ERR_OUTPUT_FILE_NOT_SPECIFIED,
+                                &value)) {
+                    set_error(&data);
+                    return data;
+                }
+                data.c_compiler = value;
+                continue;
+            }
+            if (strcmp(arg, "--target") == 0) {
+                char *value = NULL;
+                if (!take_value(&i, argc, argv, "Target triple not specified", &value)) {
+                    set_error(&data);
+                    return data;
+                }
+                if (value[0] == '\0' || data.target_triple != NULL) {
+                    ERRLN("Target triple must be non-empty and specified once");
+                    set_error(&data);
+                    return data;
+                }
+                data.target_triple = value;
+                continue;
+            }
+            if (strncmp(arg, "--target=", 9) == 0) {
+                if (arg[9] == '\0' || data.target_triple != NULL) {
+                    ERRLN("Target triple must be non-empty and specified once");
+                    set_error(&data);
+                    return data;
+                }
+                data.target_triple = arg + 9;
+                continue;
+            }
             if (strncmp(arg, "--output=", 9) == 0) {
                 if (arg[9] == '\0') {
                     ERRLN(ERR_OUTPUT_FILE_NOT_SPECIFIED);
@@ -166,7 +211,8 @@ cmd_data parse_cmd(int argc, char* argv[]) {
         data.action = HELP;
     } else if (data.path != NULL) {
         data.action = BUILD_FILE;
-    } else if (data.check_only || data.output != NULL || data.to_stdout) {
+    } else if (data.check_only || data.output != NULL || data.to_stdout ||
+               data.compile || data.c_compiler != NULL || data.target_triple != NULL || data.freestanding) {
         ERRLN(ERR_BUILD_FILE_NOT_SPECIFIED);
         set_error(&data);
     } else {
@@ -188,6 +234,21 @@ cmd_data parse_cmd(int argc, char* argv[]) {
         set_error(&data);
         return data;
     }
+    if (data.compile && (data.check_only || data.to_stdout)) {
+        ERRLN("--compile cannot be combined with --check or --stdout");
+        set_error(&data);
+        return data;
+    }
+    if (!data.compile && data.c_compiler != NULL) {
+        ERRLN("--cc requires --compile");
+        set_error(&data);
+        return data;
+    }
+    if ((data.target_triple != NULL || data.freestanding) && !data.compile) {
+        ERRLN("--target and --freestanding require --compile");
+        set_error(&data);
+        return data;
+    }
     if (data.check_only && data.output != NULL) {
         ERRLN(ERR_CHECK_OUTPUT_CONFLICT);
         set_error(&data);
@@ -195,7 +256,7 @@ cmd_data parse_cmd(int argc, char* argv[]) {
     }
 
     if (!data.check_only && !data.to_stdout && data.output == NULL) {
-        data.output = "output";
+        data.output = data.freestanding ? "terra.o" : data.compile ? "a.out" : "output";
     }
 
     return data;

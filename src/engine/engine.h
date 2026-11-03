@@ -8,6 +8,10 @@ typedef struct {
     bool check_only; /* parse and type-check, do not generate C */
     bool to_stdout;  /* write generated C to stdout instead of a file */
     bool quiet;      /* suppress progress messages */
+    bool compile;    /* compile generated C into an executable */
+    const char *c_compiler; /* compiler executable path; defaults to `cc` */
+    const char *target_triple; /* optional cross-compilation target */
+    bool freestanding;
 } terra_build_options;
 
 bool engine_build_file(FILE *input_file, const char *input_path,

@@ -22,6 +22,7 @@ typedef struct {
     size_t declared_cap;
     char **var_names;          // Variable -> class name map
     char **var_classes;
+    char **var_element_types;
     size_t var_count;
     size_t var_cap;
     char **module_aliases;     // Imported module alias -> module key
@@ -32,6 +33,7 @@ typedef struct {
     unsigned runtime_used;     // Bitmask of runtime helpers the output references
     bool in_function;          // Currently inside a top-level fn or method body
     bool fn_returns_void;      // The function being generated returns no value
+    bool freestanding;
 } c99_codegen;
 
 /**
@@ -55,6 +57,7 @@ void c99_codegen_destroy(c99_codegen *gen);
  *         NULL on error. Free it with free().
  */
 char *c99_codegen_generate(tess_program *program);
+char *c99_codegen_generate_mode(tess_program *program, bool freestanding);
 
 /**
  * @brief Generate C99 code for an imported module (module-scoped functions).
