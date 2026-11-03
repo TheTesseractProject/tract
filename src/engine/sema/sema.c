@@ -48,6 +48,42 @@ typedef struct {
 #define SEMA_HTABLE_INITIAL 16u /* must be a power of two */
 #define SEMA_HTABLE_MAX_LOAD 2  /* grow when count * 2 >= cap */
 
+/* Built-in string methods, validated for `receiver.method(args)` calls on
+ * string receivers; mirrors the dispatch table in c99_codegen.c. */
+typedef struct {
+    const char *name;
+    size_t arity;
+    tess_type ret;
+    bool str_args;   /* every argument must be a string */
+    bool int_args;   /* every argument must be an integer */
+} str_method_entry;
+
+static const str_method_entry str_methods[] = {
+    {"len",         0, TYPE_INT,  false, false},
+    {"at",          1, TYPE_INT,  false, true },
+    {"find",        1, TYPE_INT,  true,  false},
+    {"count",       1, TYPE_INT,  true,  false},
+    {"is_empty",    0, TYPE_BOOL, false, false},
+    {"contains",    1, TYPE_BOOL, true,  false},
+    {"starts_with", 1, TYPE_BOOL, true,  false},
+    {"ends_with",   1, TYPE_BOOL, true,  false},
+    {"upper",       0, TYPE_STR,  false, false},
+    {"lower",       0, TYPE_STR,  false, false},
+    {"trim",        0, TYPE_STR,  false, false},
+    {"replace",     2, TYPE_STR,  true,  false},
+    {"reverse",     0, TYPE_STR,  false, false},
+    {"repeat",      1, TYPE_STR,  false, true },
+    {"substr",      2, TYPE_STR,  false, true },
+};
+
+static const str_method_entry *str_method_lookup(const char *name) {
+    if (name == NULL) return NULL;
+    for (size_t i = 0; i < sizeof str_methods / sizeof str_methods[0]; i++) {
+        if (strcmp(str_methods[i].name, name) == 0) return &str_methods[i];
+    }
+    return NULL;
+}
+
 typedef struct tess_scope {
     struct tess_scope *parent;
     bool in_method;           /* true -> return is allowed           */
@@ -663,6 +699,10 @@ static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
                     if (m != NULL && m->ret_type != NULL) {
                         return type_from_name(s, m->ret_type, NULL);
                     }
+                } else if (mname != NULL &&
+                           infer_expr_type(s, e->as.call.callee->as.member.object) == TYPE_STR) {
+                    const str_method_entry *sm = str_method_lookup(mname);
+                    if (sm != NULL) return sm->ret;
                 }
             }
             return TYPE_NULL;
@@ -1320,6 +1360,47 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                                  cls->name, mname);
                         report(s, e->start, e->end, msg);
                         return false;
+                    }
+                } else if (mname != NULL &&
+                           infer_expr_type(s, callee->as.member.object) == TYPE_STR) {
+                    /* Builtin string methods: validate name, arity, args. */
+                    const str_method_entry *sm = str_method_lookup(mname);
+                    if (sm == NULL) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg, "str has no method `%s`", mname);
+                        report(s, callee->start, callee->end, msg);
+                        return false;
+                    }
+                    if (e->as.call.arg_count != sm->arity) {
+                        char msg[256];
+                        snprintf(msg, sizeof msg,
+                                 "`str.%s` expects %zu argument%s, got %zu",
+                                 mname, sm->arity,
+                                 sm->arity == 1 ? "" : "s",
+                                 e->as.call.arg_count);
+                        report(s, e->start, e->end, msg);
+                        return false;
+                    }
+                    for (size_t i = 0; i < e->as.call.arg_count; i++) {
+                        tess_expr *arg = e->as.call.args[i];
+                        if (arg == NULL) continue;
+                        tess_type arg_type = infer_expr_type(s, arg);
+                        if (sm->str_args && arg_type != TYPE_STR) {
+                            char msg[256];
+                            snprintf(msg, sizeof msg,
+                                     "argument %zu of `str.%s` has type %s, expected str",
+                                     i + 1, mname, type_label(arg_type));
+                            report(s, arg->start, arg->end, msg);
+                            return false;
+                        }
+                        if (sm->int_args && arg_type != TYPE_INT) {
+                            char msg[256];
+                            snprintf(msg, sizeof msg,
+                                     "argument %zu of `str.%s` has type %s, expected int",
+                                     i + 1, mname, type_label(arg_type));
+                            report(s, arg->start, arg->end, msg);
+                            return false;
+                        }
                     }
                 }
             }

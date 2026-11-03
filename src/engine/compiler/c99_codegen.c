@@ -23,8 +23,63 @@ enum {
     RT_FLOAT_STR  = 1u << 10,
     RT_ASSERT     = 1u << 11,
     RT_INPUT      = 1u << 12,
-    RT_PUT_LEN    = 1u << 13
+    RT_PUT_LEN    = 1u << 13,
+    RT_STR_AT     = 1u << 14,
+    RT_STR_FIND   = 1u << 15,
+    RT_STR_COUNT  = 1u << 16,
+    RT_STR_CONTAINS = 1u << 17,
+    RT_STR_STARTS = 1u << 18,
+    RT_STR_ENDS   = 1u << 19,
+    RT_STR_ISEMPTY = 1u << 20,
+    RT_STR_UPPER  = 1u << 21,
+    RT_STR_LOWER  = 1u << 22,
+    RT_STR_TRIM   = 1u << 23,
+    RT_STR_REPLACE = 1u << 24,
+    RT_STR_REVERSE = 1u << 25,
+    RT_STR_REPEAT = 1u << 26,
+    RT_STR_SUBSTR = 1u << 27,
+    RT_PANIC      = 1u << 28
 };
+
+/* Builtin string methods, dispatched as `receiver.method(args)` calls on
+ * string receivers. `helper` is the emitted C function; `ret_str` marks
+ * methods whose result is itself a string value (char*), used to keep
+ * chains like `s.trim().len()` and `put(s.upper())` string-dispatched. */
+typedef struct {
+    const char *name;
+    const char *helper;
+    unsigned flag;
+    bool ret_str;
+} c99_str_method;
+
+static const c99_str_method c99_str_methods[] = {
+    {"len",         "terra_len",           RT_LEN,           false},
+    {"at",          "terra_str_at",        RT_STR_AT,        false},
+    {"find",        "terra_str_find",      RT_STR_FIND,      false},
+    {"count",       "terra_str_count",     RT_STR_COUNT,     false},
+    {"is_empty",    "terra_str_is_empty",  RT_STR_ISEMPTY,   false},
+    {"contains",    "terra_str_contains",  RT_STR_CONTAINS,  false},
+    {"starts_with", "terra_str_starts",    RT_STR_STARTS,    false},
+    {"ends_with",   "terra_str_ends",      RT_STR_ENDS,      false},
+    {"upper",       "terra_str_upper",     RT_STR_UPPER,     true},
+    {"lower",       "terra_str_lower",     RT_STR_LOWER,     true},
+    {"trim",        "terra_str_trim",      RT_STR_TRIM,      true},
+    {"replace",     "terra_str_replace",   RT_STR_REPLACE,   true},
+    {"reverse",     "terra_str_reverse",   RT_STR_REVERSE,   true},
+    {"repeat",      "terra_str_repeat",    RT_STR_REPEAT,    true},
+    {"substr",      "terra_str_substr",    RT_STR_SUBSTR,    true},
+};
+
+static const c99_str_method *c99_str_method_lookup(const char *name) {
+    if (name == NULL) return NULL;
+    for (size_t i = 0; i < sizeof c99_str_methods / sizeof c99_str_methods[0];
+         i++) {
+        if (strcmp(c99_str_methods[i].name, name) == 0) {
+            return &c99_str_methods[i];
+        }
+    }
+    return NULL;
+}
 
 /**
  * @brief Ensure buffer has enough space
@@ -334,6 +389,15 @@ static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
                 }
             } else if (expr->as.call.callee &&
                        expr->as.call.callee->kind == TESS_EXPR_MEMBER) {
+                /* Builtin string methods have fixed C result types. */
+                const c99_str_method *sm = c99_str_method_lookup(
+                    expr->as.call.callee->as.member.name);
+                if (sm != NULL) {
+                    if (sm->ret_str) return "const char*";
+                    return (sm->flag == RT_LEN || sm->flag == RT_STR_FIND ||
+                            sm->flag == RT_STR_COUNT)
+                               ? "long long" : "int";
+                }
                 const char *ret = method_ret_type_name(
                     gen, expr->as.call.callee->as.member.object,
                     expr->as.call.callee->as.member.name);
@@ -899,6 +963,14 @@ static bool expr_is_string_like(c99_codegen *gen, tess_expr *e) {
                 }
             } else if (e->as.call.callee &&
                        e->as.call.callee->kind == TESS_EXPR_MEMBER) {
+                /* Builtin string methods that produce a new string keep the
+                 * chain string-dispatched (s.trim().len(), put(s.upper())). */
+                const c99_str_method *sm = c99_str_method_lookup(
+                    e->as.call.callee->as.member.name);
+                if (sm != NULL && sm->ret_str &&
+                    expr_is_string_like(gen, e->as.call.callee->as.member.object)) {
+                    return true;
+                }
                 const char *ret = method_ret_type_name(
                     gen, e->as.call.callee->as.member.object,
                     e->as.call.callee->as.member.name);
@@ -1389,6 +1461,35 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                         break;
                     }
                 }
+                /* Builtin string methods: s.method(args) -> terra_str_*. */
+                if (obj_expr && method != NULL &&
+                    expr_is_string_like(gen, obj_expr)) {
+                    const c99_str_method *sm = c99_str_method_lookup(method);
+                    if (sm != NULL) {
+                        if (gen->freestanding) {
+                            /* The string helpers need malloc/str*; the
+                             * freestanding object mode has no hosted runtime. */
+                            gen->failed = true;
+                            append_str(gen, "/* FREESTANDING_UNSUPPORTED */");
+                            break;
+                        }
+                        gen->runtime_used |= sm->flag;
+                        if (sm->flag == RT_STR_AT) gen->runtime_used |= RT_PANIC;
+                        append_str(gen, sm->helper);
+                        append_str(gen, "(");
+                        c99_codegen_expr(gen, obj_expr);
+                        for (size_t i = 0; i < expr->as.call.arg_count; i++) {
+                            append_str(gen, ", ");
+                            if (expr->as.call.args[i]) {
+                                c99_codegen_expr(gen, expr->as.call.args[i]);
+                            } else {
+                                append_str(gen, "NULL");
+                            }
+                        }
+                        append_str(gen, ")");
+                        break;
+                    }
+                }
                 const char *cls = expr_class(gen, obj_expr);
                 if (!cls) {
                     gen->failed = true;
@@ -1773,6 +1874,15 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                 /* Track string variables for concat handling. */
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
                     stmt->as.assign.value->kind == TESS_EXPR_STRING) {
+                    record_var_class(gen, stmt->as.assign.target->as.ident, "str");
+                }
+                /* String-producing method chains keep the receiver tracked as
+                 * a string (let t = s.trim(); t.upper()). */
+                if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
+                    stmt->as.assign.value->kind == TESS_EXPR_CALL &&
+                    stmt->as.assign.value->as.call.callee != NULL &&
+                    stmt->as.assign.value->as.call.callee->kind == TESS_EXPR_MEMBER &&
+                    expr_is_string_like(gen, stmt->as.assign.value)) {
                     record_var_class(gen, stmt->as.assign.target->as.ident, "str");
                 }
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
@@ -2543,7 +2653,7 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
     append_str(gen, "#include <stdlib.h>\n");
     append_str(gen, "#include <string.h>\n");
     append_str(gen, "#include <stdbool.h>\n");
-    append_str(gen, "#include <stdint.h>\n#include <stddef.h>\n#include <math.h>\n\n");
+    append_str(gen, "#include <stdint.h>\n#include <stddef.h>\n#include <math.h>\n#include <ctype.h>\n\n");
     /* Imports add only quoted, validated system header names. Include them in
      * the generated translation unit so the C compiler type-checks FFI calls. */
     if (gen->program != NULL) {
@@ -2580,6 +2690,183 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
     if (gen->runtime_used & RT_PUT_STR) {
         append_str(gen,
             "TERRA_MAYBE_UNUSED static inline void put_str(const char* s){ printf(\"%s\\n\", s ? s : \"(null)\"); }\n");
+    }
+    if (gen->runtime_used & RT_PANIC) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static void terra_panic(const char* msg){ fprintf(stderr, \"runtime error: %s\\n\", msg); exit(1); }\n");
+    }
+    if (gen->runtime_used & RT_STR_AT) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline int terra_str_at(const char* s, long long i){\n"
+            "    if(!s) s=\"\";\n"
+            "    size_t n=strlen(s);\n"
+            "    if(i < 0 || (size_t)i >= n) terra_panic(\"string index out of range\");\n"
+            "    return (unsigned char)s[i];\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_FIND) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_str_find(const char* s, const char* sub){\n"
+            "    if(!s) s=\"\";\n"
+            "    if(!sub) sub=\"\";\n"
+            "    const char* r=strstr(s, sub);\n"
+            "    return r ? (long long)(r - s) : -1LL;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_COUNT) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_str_count(const char* s, const char* sub){\n"
+            "    if(!s) s=\"\";\n"
+            "    if(!sub) sub=\"\";\n"
+            "    size_t ln=strlen(sub);\n"
+            "    if(ln == 0) return (long long)strlen(s) + 1;\n"
+            "    long long c=0;\n"
+            "    const char* p=s;\n"
+            "    while((p=strstr(p, sub)) != NULL){ c++; p += ln; }\n"
+            "    return c;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_CONTAINS) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline int terra_str_contains(const char* s, const char* sub){\n"
+            "    if(!s) s=\"\";\n"
+            "    if(!sub) sub=\"\";\n"
+            "    return strstr(s, sub) != NULL;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_STARTS) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline int terra_str_starts(const char* s, const char* p){\n"
+            "    if(!s) s=\"\";\n"
+            "    if(!p) p=\"\";\n"
+            "    return strncmp(s, p, strlen(p)) == 0;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_ENDS) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline int terra_str_ends(const char* s, const char* p){\n"
+            "    if(!s) s=\"\";\n"
+            "    if(!p) p=\"\";\n"
+            "    size_t ls=strlen(s), lp=strlen(p);\n"
+            "    if(lp > ls) return 0;\n"
+            "    return strcmp(s + (ls - lp), p) == 0;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_ISEMPTY) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline int terra_str_is_empty(const char* s){ return s == NULL || s[0] == '\\0'; }\n");
+    }
+    if (gen->runtime_used & (RT_STR_UPPER | RT_STR_LOWER)) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_case(const char* s, int up){\n"
+            "    if(!s) s=\"\";\n"
+            "    size_t n=strlen(s);\n"
+            "    char* r=(char*)malloc(n + 1);\n"
+            "    if(!r) return NULL;\n"
+            "    for(size_t i=0; i<n; i++){\n"
+            "        unsigned char c=(unsigned char)s[i];\n"
+            "        r[i]=(char)(up ? toupper(c) : tolower(c));\n"
+            "    }\n"
+            "    r[n]='\\0';\n"
+            "    return r;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_UPPER) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_upper(const char* s){ return terra_str_case(s, 1); }\n");
+    }
+    if (gen->runtime_used & RT_STR_LOWER) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_lower(const char* s){ return terra_str_case(s, 0); }\n");
+    }
+    if (gen->runtime_used & RT_STR_TRIM) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_trim(const char* s){\n"
+            "    if(!s) s=\"\";\n"
+            "    size_t n=strlen(s), b=0, e=n;\n"
+            "    while(b < e && isspace((unsigned char)s[b])) b++;\n"
+            "    while(e > b && isspace((unsigned char)s[e-1])) e--;\n"
+            "    char* r=(char*)malloc(e - b + 1);\n"
+            "    if(!r) return NULL;\n"
+            "    memcpy(r, s + b, e - b);\n"
+            "    r[e-b]='\\0';\n"
+            "    return r;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_REPLACE) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_replace(const char* s, const char* from, const char* to){\n"
+            "    if(!s) s=\"\";\n"
+            "    if(!from) from=\"\";\n"
+            "    if(!to) to=\"\";\n"
+            "    size_t lf=strlen(from), lt=strlen(to), n=strlen(s);\n"
+            "    if(lf == 0){\n"
+            "        char* r=(char*)malloc(n + 1);\n"
+            "        if(!r) return NULL;\n"
+            "        memcpy(r, s, n + 1);\n"
+            "        return r;\n"
+            "    }\n"
+            "    size_t cnt=0;\n"
+            "    const char* p=s;\n"
+            "    while((p=strstr(p, from)) != NULL){ cnt++; p += lf; }\n"
+            "    if(cnt != 0 && lt > (SIZE_MAX - n - 1) / cnt) return NULL;\n"
+            "    char* r=(char*)malloc(n + cnt*lt + 1);\n"
+            "    if(!r) return NULL;\n"
+            "    char* w=r;\n"
+            "    p=s;\n"
+            "    for(;;){\n"
+            "        const char* hit=strstr(p, from);\n"
+            "        if(!hit){ size_t rest=strlen(p); memcpy(w, p, rest); w += rest; break; }\n"
+            "        memcpy(w, p, (size_t)(hit - p)); w += hit - p;\n"
+            "        memcpy(w, to, lt); w += lt;\n"
+            "        p = hit + lf;\n"
+            "    }\n"
+            "    *w='\\0';\n"
+            "    return r;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_REVERSE) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_reverse(const char* s){\n"
+            "    if(!s) s=\"\";\n"
+            "    size_t n=strlen(s);\n"
+            "    char* r=(char*)malloc(n + 1);\n"
+            "    if(!r) return NULL;\n"
+            "    for(size_t i=0; i<n; i++) r[i]=s[n-1-i];\n"
+            "    r[n]='\\0';\n"
+            "    return r;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_REPEAT) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_repeat(const char* s, long long times){\n"
+            "    if(!s) s=\"\";\n"
+            "    if(times < 0) times = 0;\n"
+            "    size_t n=strlen(s);\n"
+            "    if(times != 0 && n > (SIZE_MAX - 1) / (size_t)times) return NULL;\n"
+            "    size_t total=n * (size_t)times;\n"
+            "    char* r=(char*)malloc(total + 1);\n"
+            "    if(!r) return NULL;\n"
+            "    for(size_t i=0; i<(size_t)times; i++) memcpy(r + i*n, s, n);\n"
+            "    r[total]='\\0';\n"
+            "    return r;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_SUBSTR) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_substr(const char* s, long long start, long long end){\n"
+            "    if(!s) s=\"\";\n"
+            "    size_t n=strlen(s);\n"
+            "    if(start < 0) start = 0;\n"
+            "    if(start > (long long)n) start = (long long)n;\n"
+            "    if(end > (long long)n) end = (long long)n;\n"
+            "    if(end < start) end = start;\n"
+            "    char* r=(char*)malloc((size_t)(end - start) + 1);\n"
+            "    if(!r) return NULL;\n"
+            "    memcpy(r, s + start, (size_t)(end - start));\n"
+            "    r[end-start]='\\0';\n"
+            "    return r;\n"
+            "}\n");
     }
     if (gen->runtime_used & RT_PUT_LEN) {
         append_str(gen,

@@ -146,6 +146,27 @@ static void test_constant_divmod_zero(void) {
           "division by a non-constant zero variable passes");
 }
 
+static void test_string_methods(void) {
+    check(sema_ok("put(\"ab\".upper());\n"),        "str.upper passes");
+    check(sema_ok("put(\"ab\".contains(\"a\"));\n"),"str.contains passes");
+    check(sema_ok("put(\"ab\".at(0));\n"),          "str.at passes");
+    check(sema_ok("put(\"ab\".replace(\"a\", \"b\"));\n"),
+          "str.replace passes");
+    check(sema_ok("let s = \"x\";\nput(s.trim().len());\n"),
+          "string method chain passes");
+    check(sema_ok("let t = \"x\".trim();\nput(t.upper());\n"),
+          "string-typed variable keeps method dispatch");
+
+    check(sema_err("put(\"ab\".nosuch());\n"),
+          "unknown string method is rejected");
+    check(sema_err("put(\"ab\".contains());\n"),
+          "wrong arity on string method is rejected");
+    check(sema_err("put(\"ab\".at(\"x\"));\n"),
+          "non-int index on str.at is rejected");
+    check(sema_err("put(\"ab\".find(5));\n"),
+          "non-str needle on str.find is rejected");
+}
+
 static void test_duplicate_class(void) {
     check(sema_err("A { x: int; }\nA { y: str; }\n"),
           "duplicate class name is rejected");
@@ -257,6 +278,7 @@ int main(void) {
     test_arity_mismatch();
     test_return_outside_method();
     test_constant_divmod_zero();
+    test_string_methods();
     test_duplicate_class();
     test_unknown_member();
     test_duplicate_field();

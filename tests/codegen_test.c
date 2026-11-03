@@ -66,6 +66,37 @@ static void test_put_string_variable(void) {
     tess_program_free(program);
 }
 
+static void test_string_methods(void) {
+    const char *src =
+        "let s = \"  Hi  \";\n"
+        "put(s.trim());\n"
+        "put(s.trim().upper());\n"
+        "put(s.contains(\"H\"));\n"
+        "put(s.find(\"H\"));\n";
+    tess_program *program = parse("strmeth.t", src);
+    check(program != NULL, "string-method program parses");
+    if (program == NULL) return;
+
+    check(tess_sema_check(program, src, "strmeth.t"),
+          "string-method program passes sema");
+
+    char *code = c99_codegen_generate(program);
+    check(code != NULL, "string-method code generation succeeds");
+    if (code != NULL) {
+        check(strstr(code, "terra_str_trim(") != NULL,
+              "trim dispatches to terra_str_trim");
+        check(strstr(code, "terra_str_upper(") != NULL,
+              "upper dispatches to terra_str_upper");
+        check(strstr(code, "terra_str_contains(") != NULL,
+              "contains dispatches to terra_str_contains");
+        check(strstr(code, "char* terra_str_upper(const char* s)") != NULL,
+              "string method helpers are emitted");
+        free(code);
+    }
+
+    tess_program_free(program);
+}
+
 static void test_large_generation(void) {
     /* Enough top-level assignments to push the generated C past the old
      * fixed 64 KiB output buffer. Parsing only: the point is buffer growth. */
@@ -223,6 +254,7 @@ static void test_functions_and_c99_scopes(void) {
 int main(void) {
     test_basic_generation();
     test_put_string_variable();
+    test_string_methods();
     test_large_generation();
     test_builtins();
     test_string_escaping();
