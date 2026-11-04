@@ -265,6 +265,31 @@ static void test_deep_nesting(void) {
     check(tess_parse(src, n, "deep.t") == NULL, "deep nesting is rejected");
 }
 
+static void test_hex_binary_shift(void) {
+    /* Hex and binary literals lex as single integer tokens. */
+    tess_lexer lx;
+    tess_lexer_init(&lx, "0xFF 0b1010 1 << 2 >> 1", 23);
+    tess_token_kind want[] = {
+        TESS_TOK_INT,   TESS_TOK_INT,  TESS_TOK_INT, TESS_TOK_SHL,
+        TESS_TOK_INT,   TESS_TOK_SHR,  TESS_TOK_INT, TESS_TOK_EOF,
+    };
+    for (size_t i = 0; i < sizeof want / sizeof want[0]; i++) {
+        tess_token tok;
+        bool ok = tess_lexer_next(&lx, &tok);
+        check(ok, "hex lexer keeps producing tokens");
+        check(tok.kind == want[i], "hex/binary/shift token kinds");
+    }
+    check(tess_parse("put(0x);", strlen("put(0x);"), "badhex.t") == NULL,
+          "hex prefix without digits is rejected");
+    check(tess_parse("put(0b2);", strlen("put(0b2);"), "badbin.t") == NULL,
+          "binary literal with non-bit digits is rejected");
+
+    tess_program *program = parse_ok("bits.t", "put(0xFF >> 4);\nput(1 << 3);\n");
+    if (program != NULL) {
+        tess_program_free(program);
+    }
+}
+
 static void test_errors(void) {
     check(tess_parse("put(\"x\")", strlen("put(\"x\")"), "missing_semi.t") ==
               NULL,
@@ -291,6 +316,7 @@ int main(void) {
     test_control_flow();
     test_escapes();
     test_errors();
+    test_hex_binary_shift();
     test_deep_nesting();
     if (failures != 0) {
         fprintf(stderr, "%d frontend failure(s)\n", failures);

@@ -6,6 +6,10 @@ static bool is_digit(unsigned char c) {
     return c >= '0' && c <= '9';
 }
 
+static bool is_hex_digit(unsigned char c) {
+    return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
 static bool is_ident_start(unsigned char c) {
     return c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
@@ -118,6 +122,46 @@ static bool lex_ident(tess_lexer *lx, tess_token *out) {
 static bool lex_number(tess_lexer *lx, tess_token *out) {
     size_t start = lx->pos;
     bool is_float = false;
+    /* Hexadecimal and binary prefixes: 0xFF, 0b1010. The base digits are
+     * consumed here; parse_int_token applies the matching strtoll base. */
+    int base_prefix = 0;
+    if (lx->pos + 1 < lx->len && lx->src[lx->pos] == '0' &&
+        (lx->src[lx->pos + 1] == 'x' || lx->src[lx->pos + 1] == 'X')) {
+        base_prefix = 16;
+    } else if (lx->pos + 1 < lx->len && lx->src[lx->pos] == '0' &&
+               (lx->src[lx->pos + 1] == 'b' || lx->src[lx->pos + 1] == 'B')) {
+        base_prefix = 2;
+    }
+    if (base_prefix != 0) {
+        lx->pos += 2;
+        size_t digits = 0;
+        while (lx->pos < lx->len) {
+            unsigned char c = (unsigned char)lx->src[lx->pos];
+            bool ok = base_prefix == 16 ? is_hex_digit(c) : (c == '0' || c == '1');
+            if (!ok) {
+                break;
+            }
+            lx->pos++;
+            digits++;
+        }
+        if (digits == 0) {
+            return fail(lx, base_prefix == 16 ? "malformed hex literal"
+                                              : "malformed binary literal",
+                        start);
+        }
+        if (base_prefix == 2 && lx->pos < lx->len &&
+            is_digit((unsigned char)lx->src[lx->pos])) {
+            return fail(lx, "malformed binary literal", start);
+        }
+        if (lx->pos < lx->len &&
+            is_ident_start((unsigned char)lx->src[lx->pos])) {
+            return fail(lx, "invalid suffix on number", lx->pos);
+        }
+        out->kind = TESS_TOK_INT;
+        out->start = start;
+        out->end = lx->pos;
+        return true;
+    }
     while (lx->pos < lx->len && is_digit((unsigned char)lx->src[lx->pos])) {
         lx->pos++;
     }
@@ -244,11 +288,17 @@ bool tess_lexer_next(tess_lexer *lx, tess_token *out) {
             }
             return one(lx, out, TESS_TOK_EQ, 1);
         case '<':
+            if (has_next && n == '<') {
+                return one(lx, out, TESS_TOK_SHL, 2);
+            }
             if (has_next && n == '=') {
                 return one(lx, out, TESS_TOK_LE, 2);
             }
             return one(lx, out, TESS_TOK_LT, 1);
         case '>':
+            if (has_next && n == '>') {
+                return one(lx, out, TESS_TOK_SHR, 2);
+            }
             if (has_next && n == '=') {
                 return one(lx, out, TESS_TOK_GE, 2);
             }
@@ -300,6 +350,8 @@ const char *tess_token_kind_name(tess_token_kind kind) {
         case TESS_TOK_STAR: return "`*`";
         case TESS_TOK_SLASH: return "`/`";
         case TESS_TOK_PERCENT: return "`%`";
+        case TESS_TOK_SHL: return "`<<`";
+        case TESS_TOK_SHR: return "`>>`";
         case TESS_TOK_LT: return "`<`";
         case TESS_TOK_LE: return "`<=`";
         case TESS_TOK_GT: return "`>`";

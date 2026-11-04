@@ -174,6 +174,18 @@ static void test_math_module(void) {
           "unknown math function is rejected");
 }
 
+static void test_shift_operators(void) {
+    check(sema_ok("put(0xFF >> 4);\n"), "shift with hex literal passes");
+    check(sema_ok("let m = 0b1100 | 0b0011;\nput(m & 0x0F);\n"),
+          "bitwise mix of binary literals passes");
+    check(sema_ok("put(1 << 10);\n"), "shift left passes");
+
+    check(sema_err("put(1.5 << 2);\n"),
+          "shift of float is rejected");
+    check(sema_err("put(\"a\" >> 1);\n"),
+          "shift of string is rejected");
+}
+
 static void test_duplicate_class(void) {
     check(sema_err("A { x: int; }\nA { y: str; }\n"),
           "duplicate class name is rejected");
@@ -287,6 +299,7 @@ int main(void) {
     test_constant_divmod_zero();
     test_string_methods();
     test_math_module();
+    test_shift_operators();
     test_duplicate_class();
     test_unknown_member();
     test_duplicate_field();

@@ -161,7 +161,9 @@ typedef enum {
     TESS_BIN_SUB,
     TESS_BIN_MUL,
     TESS_BIN_DIV,
-    TESS_BIN_MOD
+    TESS_BIN_MOD,
+    TESS_BIN_SHL,
+    TESS_BIN_SHR
 } tess_binary_op;
 
 typedef enum {

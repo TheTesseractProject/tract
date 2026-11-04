@@ -120,6 +120,32 @@ static void test_safe_mode(void) {
     tess_program_free(program);
 }
 
+static void test_hex_binary_shift_codegen(void) {
+    const char *src =
+        "put(0xFF);\n"
+        "put(1 << 10);\n"
+        "let m = 0b1100 & 0x0F;\n"
+        "put(m);\n";
+    tess_program *program = parse("bits.t", src);
+    check(program != NULL, "bit-ops program parses");
+    if (program == NULL) return;
+
+    check(tess_sema_check(program, src, "bits.t"),
+          "bit-ops program passes sema");
+
+    char *code = c99_codegen_generate(program);
+    check(code != NULL, "bit-ops code generation succeeds");
+    if (code != NULL) {
+        check(strstr(code, "<< 10") != NULL, "shift left reaches generated C");
+        check(strstr(code, "255") != NULL, "hex literal 0xFF reaches generated C");
+        check(strstr(code, "& 15") != NULL,
+              "hex literal 0x0F reaches generated C");
+        free(code);
+    }
+
+    tess_program_free(program);
+}
+
 static void test_large_generation(void) {
     /* Enough top-level assignments to push the generated C past the old
      * fixed 64 KiB output buffer. Parsing only: the point is buffer growth. */
@@ -278,6 +304,7 @@ int main(void) {
     test_basic_generation();
     test_put_string_variable();
     test_string_methods();
+    test_hex_binary_shift_codegen();
     test_safe_mode();
     test_large_generation();
     test_builtins();

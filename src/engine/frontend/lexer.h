@@ -40,6 +40,8 @@ typedef enum {
     TESS_TOK_PIPE,
     TESS_TOK_CARET,
     TESS_TOK_TILDE,
+    TESS_TOK_SHL,
+    TESS_TOK_SHR,
     TESS_TOK_KW_IF,
     TESS_TOK_KW_ELSE,
     TESS_TOK_KW_WHILE,

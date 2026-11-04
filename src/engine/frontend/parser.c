@@ -333,7 +333,18 @@ static bool parse_int_token(tess_parser *p, tess_token tok, int64_t *out) {
     buf[n] = '\0';
     errno = 0;
     char *end = NULL;
-    long long value = strtoll(buf, &end, 10);
+    /* The lexer keeps hex and binary literals as single tokens. strtoll
+     * accepts the 0x prefix for base 16, but not the 0b prefix, so skip that
+     * prefix explicitly. */
+    int base = 10;
+    if (n >= 2 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')) {
+        base = 16;
+    } else if (n >= 2 && buf[0] == '0' && (buf[1] == 'b' || buf[1] == 'B')) {
+        base = 2;
+        memmove(buf, buf + 2, n - 1);
+        n -= 2;
+    }
+    long long value = strtoll(buf, &end, base);
     if (errno == ERANGE || end == buf || *end != '\0') {
         return fail_at(p, "invalid integer literal", tok.start, tok.end);
     }
@@ -686,11 +697,13 @@ static int binary_prec(tess_token_kind kind) {
         case TESS_TOK_LE:
         case TESS_TOK_GT:
         case TESS_TOK_GE: return 7;
+        case TESS_TOK_SHL:
+        case TESS_TOK_SHR: return 8;
         case TESS_TOK_PLUS:
-        case TESS_TOK_MINUS: return 8;
+        case TESS_TOK_MINUS: return 9;
         case TESS_TOK_STAR:
         case TESS_TOK_SLASH:
-        case TESS_TOK_PERCENT: return 9;
+        case TESS_TOK_PERCENT: return 10;
         default: return 0;
     }
 }
@@ -713,6 +726,8 @@ static tess_binary_op binary_op(tess_token_kind kind) {
         case TESS_TOK_STAR: return TESS_BIN_MUL;
         case TESS_TOK_SLASH: return TESS_BIN_DIV;
         case TESS_TOK_PERCENT: return TESS_BIN_MOD;
+        case TESS_TOK_SHL: return TESS_BIN_SHL;
+        case TESS_TOK_SHR: return TESS_BIN_SHR;
         default: return TESS_BIN_ADD;
     }
 }

@@ -94,7 +94,9 @@ if(BUILD_TESTING)
     # The list covers the plain (.t) examples plus the .tes extension form.
     foreach(example class hello_world even_odd matrix_mult linked_classes
                     math_demo test_example.tes system_features record_abi
-                    multidim_array string_nul string_methods math_builtins)
+                    multidim_array string_nul string_methods math_builtins
+                    bitops)
+        unset(example_expect_len)
         if(example STREQUAL "class")
             set(example_expect "world")
         elseif(example STREQUAL "hello_world")
@@ -119,6 +121,8 @@ if(BUILD_TESTING)
         elseif(example STREQUAL "string_methods")
             set(example_expect "HeLLo, Tesseract!")
         elseif(example STREQUAL "math_builtins")
+            set(example_expect "1024")
+        elseif(example STREQUAL "bitops")
             set(example_expect "1024")
         else()
             set(example_expect "Product")

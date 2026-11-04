@@ -1799,6 +1799,8 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                 case TESS_BIN_MUL: append_str(gen, " * "); break;
                 case TESS_BIN_DIV: append_str(gen, " / "); break;
                 case TESS_BIN_MOD: append_str(gen, " % "); break;
+                case TESS_BIN_SHL: append_str(gen, " << "); break;
+                case TESS_BIN_SHR: append_str(gen, " >> "); break;
             }
             
             c99_codegen_expr(gen, expr->as.binary.rhs);

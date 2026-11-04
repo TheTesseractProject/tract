@@ -1566,6 +1566,20 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                 }
             }
             
+            /* Shift operators: integer operands only, so a float bit
+             * pattern never reaches the generated C silently. */
+            if (op == TESS_BIN_SHL || op == TESS_BIN_SHR) {
+                if (lhs_type != TYPE_INT || rhs_type != TYPE_INT) {
+                    char msg[256];
+                    snprintf(msg, sizeof msg,
+                             "shift operator requires integer operands, got %s and %s",
+                             lhs_type == TYPE_INT ? "int" : "non-int",
+                             rhs_type == TYPE_INT ? "int" : "non-int");
+                    report(s, e->start, e->end, msg);
+                    return false;
+                }
+            }
+
             /* Logical operators: both operands should be boolean;
              * emit a warning-level note but do not hard-fail, since many
              * languages allow truthy/falsy values in logical expressions. */
