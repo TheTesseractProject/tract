@@ -55,12 +55,27 @@ if(NOT cc_result EQUAL 0)
         "generated C failed to compile (${cc_result})\nstdout:\n${cc_stdout}\nstderr:\n${cc_stderr}")
 endif()
 
-execute_process(
-    COMMAND "${binary}"
-    RESULT_VARIABLE run_result
-    OUTPUT_VARIABLE run_stdout
-    ERROR_VARIABLE run_stderr
-)
+if(DEFINED EXPECT_HEX)
+    set(stdout_file "${WORK}/stdout.bin")
+    execute_process(
+        COMMAND "${binary}"
+        RESULT_VARIABLE run_result
+        OUTPUT_FILE "${stdout_file}"
+        ERROR_VARIABLE run_stderr
+    )
+    file(READ "${stdout_file}" actual_hex HEX)
+    if(NOT actual_hex STREQUAL EXPECT_HEX)
+        message(FATAL_ERROR
+            "program output bytes mismatch: expected ${EXPECT_HEX}, got ${actual_hex}\nstderr:\n${run_stderr}")
+    endif()
+else()
+    execute_process(
+        COMMAND "${binary}"
+        RESULT_VARIABLE run_result
+        OUTPUT_VARIABLE run_stdout
+        ERROR_VARIABLE run_stderr
+    )
+endif()
 
 if(EXPECT_PANIC)
     if(run_result EQUAL 0)
@@ -80,10 +95,12 @@ if(NOT run_result EQUAL 0)
         "generated program failed (${run_result})\nstdout:\n${run_stdout}\nstderr:\n${run_stderr}")
 endif()
 
-string(FIND "${run_stdout}" "${EXPECT}" found)
-if(found EQUAL -1)
-    message(FATAL_ERROR
-        "program output did not contain '${EXPECT}'\nactual output:\n${run_stdout}")
+if(NOT DEFINED EXPECT_HEX)
+    string(FIND "${run_stdout}" "${EXPECT}" found)
+    if(found EQUAL -1)
+        message(FATAL_ERROR
+            "program output did not contain '${EXPECT}'\nactual output:\n${run_stdout}")
+    endif()
 endif()
 
 # Optional exact byte count, for outputs that embed NUL bytes which the

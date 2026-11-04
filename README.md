@@ -56,9 +56,11 @@ Hello there!
 - Builtin string methods (Python-flavoured standard library): `len`, `at`
   (bounds-checked), `find`, `count`, `is_empty`, `contains`, `starts_with`,
   `ends_with`, `upper`, `lower`, `trim`, `replace`, `reverse`, `repeat` and
-  `substr`. Methods chain naturally: `s.trim().upper()`. Methods that build a
-  new string (`upper`, `replace`, ...) allocate; `at` panics on an
-  out-of-range index.
+  `substr`, plus printf-style `format`, `join` and `split`. Methods chain
+  naturally: `s.trim().upper()`. `separator.join(values)` accepts a string
+  array or slice, and `split` returns an indexable `slice[str]`. Formatting
+  uses C `printf` conversion rules. Methods that build a new string allocate;
+  `at` panics on an out-of-range index.
 - The native `math` module wraps C99 `<math.h>`: `@math.sqrt`, `@math.pow`,
   `@math.floor`, `@math.ceil`, `@math.round`, `@math.abs`, `@math.min`,
   `@math.max`, `@math.exp`, `@math.log`. Unknown members are compile-time
@@ -98,7 +100,7 @@ Hello there!
 ```bash
 # Clone the repository
 git clone https://github.com/nazar-ponomarenko-dots/Terra
-cd terra
+cd Terra
 ```
 
 ```bash

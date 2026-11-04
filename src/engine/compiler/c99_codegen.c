@@ -38,7 +38,10 @@ enum {
     RT_STR_REVERSE = 1u << 25,
     RT_STR_REPEAT = 1u << 26,
     RT_STR_SUBSTR = 1u << 27,
-    RT_PANIC      = 1u << 28
+    RT_STR_FORMAT = 1u << 28,
+    RT_STR_JOIN   = 1u << 29,
+    RT_STR_SPLIT  = 1u << 30,
+    RT_PANIC      = 1u << 31
 };
 
 /* Builtin string methods, dispatched as `receiver.method(args)` calls on
@@ -70,6 +73,9 @@ static const c99_str_method c99_str_methods[] = {
     {"reverse",     "terra_str_reverse",   RT_STR_REVERSE,   true},
     {"repeat",      "terra_str_repeat",    RT_STR_REPEAT,    true},
     {"substr",      "terra_str_substr",    RT_STR_SUBSTR,    true},
+    {"format",      "terra_str_format",    RT_STR_FORMAT,    true},
+    {"join",        "terra_str_join",      RT_STR_JOIN,      true},
+    {"split",       "terra_str_split",     RT_STR_SPLIT,     false},
 };
 
 static const c99_str_method *c99_str_method_lookup(const char *name) {
@@ -300,6 +306,7 @@ static const char* get_var_class(c99_codegen *gen, const char *name) {
 }
 
 static bool expr_is_string_like(c99_codegen *gen, tess_expr *e);
+static bool expr_is_string_array(c99_codegen *gen, tess_expr *expr);
 static bool expr_is_float_like(c99_codegen *gen, tess_expr *e);
 static bool is_class_name(c99_codegen *gen, const char *name);
 static bool is_record_name(c99_codegen *gen, const char *name);
@@ -416,6 +423,7 @@ static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
                 const c99_str_method *sm = c99_str_method_lookup(
                     expr->as.call.callee->as.member.name);
                 if (sm != NULL) {
+                    if (sm->flag == RT_STR_SPLIT) return "terra_slice";
                     if (sm->ret_str) return "const char*";
                     return (sm->flag == RT_LEN || sm->flag == RT_STR_FIND ||
                             sm->flag == RT_STR_COUNT)
@@ -507,7 +515,9 @@ static const char *expr_type_name(c99_codegen *gen, tess_expr *expr) {
         }
         case TESS_EXPR_TERNARY:
             return expr_type_name(gen, expr->as.ternary.then_expr);
-        case TESS_EXPR_ARRAY: return array_is_float(gen, expr) ? "double*" : "int64_t*";
+        case TESS_EXPR_ARRAY:
+            if (expr_is_string_array(gen, expr)) return "const char**";
+            return array_is_float(gen, expr) ? "double*" : "int64_t*";
         case TESS_EXPR_SLICE: return "terra_slice";
         case TESS_EXPR_INDEX: return tess_type_to_c(expr_element_type(gen, expr->as.index.object));
         case TESS_EXPR_RECORD_INIT: return expr->as.record_init.type_name;
@@ -636,6 +646,72 @@ static const char *expr_record_type(c99_codegen *gen, tess_expr *expr) {
     return NULL;
 }
 
+static bool expr_is_string_array(c99_codegen *gen, tess_expr *expr) {
+    if (expr == NULL) return false;
+    if (expr->kind == TESS_EXPR_ARRAY) {
+        for (size_t i = 0; i < expr->as.array.count; i++)
+            if (!expr_is_string_like(gen, expr->as.array.items[i])) return false;
+        return true;
+    }
+    if (expr->kind == TESS_EXPR_SLICE)
+        return expr_is_string_array(gen, expr->as.slice.object);
+    if (expr->kind == TESS_EXPR_CALL &&
+        expr->as.call.callee != NULL &&
+        expr->as.call.callee->kind == TESS_EXPR_MEMBER &&
+        expr->as.call.callee->as.member.name != NULL &&
+        strcmp(expr->as.call.callee->as.member.name, "split") == 0)
+        return true;
+    if (expr->kind == TESS_EXPR_IDENT) {
+        const char *class_name = get_var_class(gen, expr->as.ident);
+        const char *element = get_var_element(gen, expr->as.ident);
+        if (class_name != NULL && strcmp(class_name, "terra_slice") == 0)
+            return element != NULL &&
+                (strstr(element, "str") != NULL ||
+                 strstr(element, "string") != NULL);
+        if (class_name != NULL && strcmp(class_name, "fixedarray") == 0 &&
+            element != NULL) {
+            const char *base = element;
+            if (strncmp(base, "fixedarray:", 11) == 0) base += 11;
+            return strncmp(base, "str[", 4) == 0 ||
+                   strncmp(base, "string[", 7) == 0;
+        }
+    }
+    return false;
+}
+
+static void append_string_slice_arg(c99_codegen *gen, tess_expr *expr) {
+    if (expr != NULL && expr->kind == TESS_EXPR_ARRAY &&
+        expr_is_string_array(gen, expr)) {
+        append_str(gen, "((terra_slice){ .data = (void*)(");
+        c99_codegen_expr(gen, expr);
+        append_str(gen, "), .len = ");
+        append_array_length(gen, expr);
+        append_str(gen, " })");
+        return;
+    }
+    if (expr != NULL && expr->kind == TESS_EXPR_IDENT &&
+        get_var_class(gen, expr->as.ident) != NULL &&
+        strcmp(get_var_class(gen, expr->as.ident), "fixedarray") == 0) {
+        append_str(gen, "((terra_slice){ .data = (void*)(");
+        c99_codegen_expr(gen, expr);
+        append_str(gen, "), .len = ");
+        append_array_length(gen, expr);
+        append_str(gen, " })");
+        return;
+    }
+    if (expr != NULL &&
+        (expr->kind == TESS_EXPR_SLICE ||
+         (expr->kind == TESS_EXPR_IDENT &&
+          get_var_class(gen, expr->as.ident) != NULL &&
+          strcmp(get_var_class(gen, expr->as.ident), "terra_slice") == 0) ||
+         expr_is_string_array(gen, expr))) {
+        c99_codegen_expr(gen, expr);
+        return;
+    }
+    gen->failed = true;
+    append_str(gen, "((terra_slice){ .data = NULL, .len = 0 })");
+}
+
 static bool has_language_main(c99_codegen *gen) {
     if (gen == NULL || gen->program == NULL) return false;
     for (size_t i = 0; i < gen->program->count; i++) {
@@ -753,7 +829,15 @@ static const char *expr_element_type(c99_codegen *gen, tess_expr *expr) {
         return expr_type_name(gen, expr->as.unary.operand);
     if (expr->kind == TESS_EXPR_UNARY && expr->as.unary.op == TESS_UN_DEREFERENCE)
         return expr_element_type(gen, expr->as.unary.operand);
-    if (expr->kind == TESS_EXPR_ARRAY) return array_is_float(gen, expr) ? "f64" : "i64";
+    if (expr->kind == TESS_EXPR_ARRAY) {
+        if (expr_is_string_array(gen, expr)) return "str";
+        return array_is_float(gen, expr) ? "f64" : "i64";
+    }
+    if (expr->kind == TESS_EXPR_CALL && expr->as.call.callee != NULL &&
+        expr->as.call.callee->kind == TESS_EXPR_MEMBER &&
+        expr->as.call.callee->as.member.name != NULL &&
+        strcmp(expr->as.call.callee->as.member.name, "split") == 0)
+        return "str";
     if (expr->kind == TESS_EXPR_SLICE) return expr_element_type(gen, expr->as.slice.object);
     if (expr->kind == TESS_EXPR_IDENT) type = get_var_element(gen, expr->as.ident);
     if (expr->kind == TESS_EXPR_INDEX) return expr_element_type(gen, expr->as.index.object);
@@ -959,6 +1043,12 @@ static bool expr_is_string_like(c99_codegen *gen, tess_expr *e) {
     if (!e) return false;
     switch (e->kind) {
         case TESS_EXPR_STRING: return true;
+        case TESS_EXPR_INDEX: {
+            const char *element = expr_element_type(gen, e->as.index.object);
+            return element != NULL &&
+                (strcmp(element, "str") == 0 ||
+                 strcmp(element, "string") == 0);
+        }
         case TESS_EXPR_IDENT: {
             const char *cls = get_var_class(gen, e->as.ident);
             /* Bare field name inside a method (maps to self->field) */
@@ -1011,6 +1101,10 @@ static bool expr_is_string_like(c99_codegen *gen, tess_expr *e) {
                     expr_is_string_like(gen, e->as.call.callee->as.member.object)) {
                     return true;
                 }
+                if (sm != NULL && sm->flag == RT_STR_SPLIT &&
+                    expr_is_string_like(gen,
+                        e->as.call.callee->as.member.object))
+                    return false;
                 const char *ret = method_ret_type_name(
                     gen, e->as.call.callee->as.member.object,
                     e->as.call.callee->as.member.name);
@@ -1286,7 +1380,9 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             break;
         }
         case TESS_EXPR_ARRAY: {
-            append_str(gen, array_is_float(gen, expr) ? "((double[]){" : "((int64_t[]){");
+            append_str(gen, expr_is_string_array(gen, expr)
+                ? "((const char*[]){" : array_is_float(gen, expr)
+                ? "((double[]){" : "((int64_t[]){");
             for (size_t i = 0; i < expr->as.array.count; i++) {
                 if (i) append_str(gen, ", ");
                 c99_codegen_expr(gen, expr->as.array.items[i]);
@@ -1558,12 +1654,21 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                         append_str(gen, sm->helper);
                         append_str(gen, "(");
                         c99_codegen_expr(gen, obj_expr);
-                        for (size_t i = 0; i < expr->as.call.arg_count; i++) {
+                        if (sm->flag == RT_STR_JOIN) {
                             append_str(gen, ", ");
-                            if (expr->as.call.args[i]) {
-                                c99_codegen_expr(gen, expr->as.call.args[i]);
-                            } else {
-                                append_str(gen, "NULL");
+                            if (expr->as.call.arg_count == 1)
+                                append_string_slice_arg(gen,
+                                    expr->as.call.args[0]);
+                            else
+                                gen->failed = true;
+                        } else {
+                            for (size_t i = 0; i < expr->as.call.arg_count; i++) {
+                                append_str(gen, ", ");
+                                if (expr->as.call.args[i]) {
+                                    c99_codegen_expr(gen, expr->as.call.args[i]);
+                                } else {
+                                    append_str(gen, "NULL");
+                                }
                             }
                         }
                         append_str(gen, ")");
@@ -1681,6 +1786,8 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             } else if (call_name != NULL && arg0 != NULL &&
                        strcmp(call_name, "len") == 0 &&
                        (arg0->kind == TESS_EXPR_SLICE ||
+                        (arg0->kind == TESS_EXPR_CALL &&
+                         strcmp(expr_type_name(gen, arg0), "terra_slice") == 0) ||
                         (arg0->kind == TESS_EXPR_IDENT &&
                          get_var_class(gen, arg0->as.ident) != NULL &&
                          strcmp(get_var_class(gen, arg0->as.ident), "terra_slice") == 0))) {
@@ -1961,9 +2068,18 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                         record_var_class(gen, stmt->as.assign.target->as.ident,
                                          stmt->as.assign.declared_type);
                     if (stmt->as.assign.declared_type != NULL &&
-                        strchr(stmt->as.assign.declared_type, '[') != NULL)
+                        strchr(stmt->as.assign.declared_type, '[') != NULL) {
+                        bool slice_type = strncmp(stmt->as.assign.declared_type,
+                                                  "slice[", 6) == 0;
+                        if (slice_type)
+                            record_var_class(gen, stmt->as.assign.target->as.ident,
+                                             "terra_slice");
                         record_var_element(gen, stmt->as.assign.target->as.ident,
-                                           "fixedarray", stmt->as.assign.declared_type);
+                                           slice_type ? "terra_slice" : "fixedarray",
+                                           slice_type
+                                               ? slice_element_decl_type(stmt->as.assign.declared_type)
+                                               : stmt->as.assign.declared_type);
+                    }
                     else if (array_initializer)
                         record_var_element(gen, stmt->as.assign.target->as.ident,
                                            "fixedarray", array_is_float(gen, stmt->as.assign.value) ? "f64" : "i64");
@@ -1999,6 +2115,18 @@ static void c99_codegen_stmt(c99_codegen *gen, tess_stmt *stmt) {
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
                     stmt->as.assign.value->kind == TESS_EXPR_SLICE) {
                     record_var_class(gen, stmt->as.assign.target->as.ident, "terra_slice");
+                }
+                if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
+                    stmt->as.assign.value->kind == TESS_EXPR_CALL &&
+                    stmt->as.assign.value->as.call.callee != NULL &&
+                    stmt->as.assign.value->as.call.callee->kind == TESS_EXPR_MEMBER &&
+                    stmt->as.assign.value->as.call.callee->as.member.name != NULL &&
+                    strcmp(stmt->as.assign.value->as.call.callee->as.member.name,
+                           "split") == 0) {
+                    record_var_class(gen, stmt->as.assign.target->as.ident,
+                                     "terra_slice");
+                    record_var_element(gen, stmt->as.assign.target->as.ident,
+                                       "terra_slice", "str");
                 }
                 if (stmt->as.assign.target->kind == TESS_EXPR_IDENT &&
                     stmt->as.assign.value->kind == TESS_EXPR_BINARY &&
@@ -2764,7 +2892,7 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
     append_str(gen, "#include <stdlib.h>\n");
     append_str(gen, "#include <string.h>\n");
     append_str(gen, "#include <stdbool.h>\n");
-    append_str(gen, "#include <stdint.h>\n#include <stddef.h>\n#include <math.h>\n#include <ctype.h>\n\n");
+    append_str(gen, "#include <stdint.h>\n#include <stddef.h>\n#include <math.h>\n#include <ctype.h>\n#include <stdarg.h>\n\n");
     /* Imports add only quoted, validated system header names. Include them in
      * the generated translation unit so the C compiler type-checks FFI calls. */
     if (gen->program != NULL) {
@@ -2805,6 +2933,10 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
     if (gen->runtime_used & RT_PANIC) {
         append_str(gen,
             "TERRA_MAYBE_UNUSED static void terra_panic(const char* msg){ fprintf(stderr, \"runtime error: %s\\n\", msg); exit(1); }\n");
+    }
+    if (gen->runtime_used & (RT_STR_FORMAT | RT_STR_JOIN | RT_STR_SPLIT)) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline void terra_string_runtime_error(const char* msg){ fprintf(stderr, \"runtime error: %s\\n\", msg); exit(1); }\n");
     }
     if (gen->safe) {
         append_str(gen,
@@ -3083,6 +3215,70 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
             "    }\n"
             "    buf[len]='\\0'; return buf;\n"
             "}\n\n");
+    }
+    if (gen->runtime_used & RT_STR_FORMAT) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_format(const char* s, ...){\n"
+            "    if(!s) s=\"\";\n"
+            "    va_list ap, measure;\n"
+            "    va_start(ap,s); va_copy(measure,ap);\n"
+            "    int needed=vsnprintf(NULL,0,s,measure); va_end(measure);\n"
+            "    if(needed<0 || (size_t)needed==SIZE_MAX) { va_end(ap); terra_string_runtime_error(\"string formatting failed\"); return NULL; }\n"
+            "    char* r=(char*)malloc((size_t)needed+1); if(!r) { va_end(ap); terra_string_runtime_error(\"out of memory while formatting string\"); return NULL; }\n"
+            "    int written=vsnprintf(r,(size_t)needed+1,s,ap); va_end(ap);\n"
+            "    if(written!=needed) { free(r); terra_string_runtime_error(\"string formatting failed\"); return NULL; }\n"
+            "    return r;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_JOIN) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline char* terra_str_join(const char* sep, terra_slice values){\n"
+            "    if(!sep)sep=\"\";\n"
+            "    const char*const*items=(const char*const*)values.data;\n"
+            "    size_t seplen=strlen(sep), total=0;\n"
+            "    if(values.len!=0 && items==NULL){terra_string_runtime_error(\"invalid string slice\");return NULL;}\n"
+            "    for(size_t i=0;i<values.len;i++){\n"
+            "        size_t n=items[i]?strlen(items[i]):0;\n"
+            "        if(n>SIZE_MAX-total){terra_string_runtime_error(\"joined string is too large\");return NULL;}\n"
+            "        total+=n;\n"
+            "    }\n"
+            "    if(values.len>1 && seplen>(SIZE_MAX-total)/(values.len-1)){terra_string_runtime_error(\"joined string is too large\");return NULL;}\n"
+            "    total+=seplen*(values.len?values.len-1:0);\n"
+            "    if(total==SIZE_MAX){terra_string_runtime_error(\"joined string is too large\");return NULL;}\n"
+            "    char*r=(char*)malloc(total+1);if(!r){terra_string_runtime_error(\"out of memory while joining strings\");return NULL;}\n"
+            "    char*w=r;\n"
+            "    for(size_t i=0;i<values.len;i++){\n"
+            "        if(i){memcpy(w,sep,seplen);w+=seplen;}\n"
+            "        if(items[i]){size_t n=strlen(items[i]);memcpy(w,items[i],n);w+=n;}\n"
+            "    }\n"
+            "    *w='\\0';return r;\n"
+            "}\n");
+    }
+    if (gen->runtime_used & RT_STR_SPLIT) {
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline terra_slice terra_str_split(const char* s, const char* sep){\n"
+            "    terra_slice result={NULL,0};\n"
+            "    if(!s)s=\"\";\n"
+            "    if(!sep)sep=\"\";\n"
+            "    size_t n=strlen(s), seplen=strlen(sep), count=0;\n"
+            "    if(seplen==0)count=n;\n"
+            "    else { const char*p=s; for(;;){const char*h=strstr(p,sep);count++;if(!h)break;p=h+seplen;} }\n"
+            "    if(count==0)return result;\n"
+            "    if(count>SIZE_MAX/sizeof(char*)){terra_string_runtime_error(\"split result is too large\");return result;}\n"
+            "    char**items=(char**)calloc(count,sizeof(char*));if(!items){terra_string_runtime_error(\"out of memory while splitting string\");return result;}\n"
+            "    const char*begin=s;\n"
+            "    for(size_t i=0;i<count;i++){\n"
+            "        const char*end=seplen?strstr(begin,sep):begin+1;\n"
+            "        if(end==NULL)end=s+n;\n"
+            "        size_t len=(size_t)(end-begin);\n"
+            "        if(len==SIZE_MAX){for(size_t j=0;j<i;j++)free(items[j]);free(items);terra_string_runtime_error(\"split result is too large\");return result;}\n"
+            "        items[i]=(char*)malloc(len+1);\n"
+            "        if(!items[i]){for(size_t j=0;j<i;j++)free(items[j]);free(items);terra_string_runtime_error(\"out of memory while splitting string\");return result;}\n"
+            "        memcpy(items[i],begin,len);items[i][len]='\\0';\n"
+            "        begin=end+(seplen?seplen:0);\n"
+            "    }\n"
+            "    result.data=items;result.len=count;return result;\n"
+            "}\n");
     }
     append_str(gen, "\n");
 }

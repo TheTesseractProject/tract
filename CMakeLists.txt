@@ -95,8 +95,9 @@ if(BUILD_TESTING)
     foreach(example class hello_world even_odd matrix_mult linked_classes
                     math_demo test_example.tes system_features record_abi
                     multidim_array string_nul string_methods math_builtins
-                    bitops)
+                    string_format_join_split bitops)
         unset(example_expect_len)
+        set(example_extra_args)
         if(example STREQUAL "class")
             set(example_expect "world")
         elseif(example STREQUAL "hello_world")
@@ -117,15 +118,24 @@ if(BUILD_TESTING)
             set(example_expect "9")
         elseif(example STREQUAL "string_nul")
             set(example_expect "after")
-            set(example_expect_len 14)
         elseif(example STREQUAL "string_methods")
             set(example_expect "HeLLo, Tesseract!")
+        elseif(example STREQUAL "string_format_join_split")
+            set(example_expect "alpha||gamma")
         elseif(example STREQUAL "math_builtins")
             set(example_expect "1024")
         elseif(example STREQUAL "bitops")
             set(example_expect "1024")
         else()
             set(example_expect "Product")
+        endif()
+        if(example STREQUAL "string_nul")
+            list(APPEND example_extra_args
+                -DEXPECT_HEX=6100620a7800790a61667465720a)
+        endif()
+        if(DEFINED example_expect_len)
+            list(APPEND example_extra_args
+                -DEXPECT_LEN=${example_expect_len})
         endif()
         set(example_source "${CMAKE_SOURCE_DIR}/examples/${example}")
         if(NOT example MATCHES "\\.tes$")
@@ -139,7 +149,7 @@ if(BUILD_TESTING)
                 -DCOMPILER=${CMAKE_C_COMPILER}
                 -DSOURCE=${example_source}
                 -DEXPECT=${example_expect}
-                $<$<BOOL:${example_expect_len}>:-DEXPECT_LEN=${example_expect_len}>
+                ${example_extra_args}
                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/e2e_${test_name}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e.cmake
         )

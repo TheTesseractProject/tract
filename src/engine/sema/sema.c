@@ -56,24 +56,29 @@ typedef struct {
     tess_type ret;
     bool str_args;   /* every argument must be a string */
     bool int_args;   /* every argument must be an integer */
+    bool variadic;
+    bool slice_arg;
 } str_method_entry;
 
 static const str_method_entry str_methods[] = {
-    {"len",         0, TYPE_INT,  false, false},
-    {"at",          1, TYPE_INT,  false, true },
-    {"find",        1, TYPE_INT,  true,  false},
-    {"count",       1, TYPE_INT,  true,  false},
-    {"is_empty",    0, TYPE_BOOL, false, false},
-    {"contains",    1, TYPE_BOOL, true,  false},
-    {"starts_with", 1, TYPE_BOOL, true,  false},
-    {"ends_with",   1, TYPE_BOOL, true,  false},
-    {"upper",       0, TYPE_STR,  false, false},
-    {"lower",       0, TYPE_STR,  false, false},
-    {"trim",        0, TYPE_STR,  false, false},
-    {"replace",     2, TYPE_STR,  true,  false},
-    {"reverse",     0, TYPE_STR,  false, false},
-    {"repeat",      1, TYPE_STR,  false, true },
-    {"substr",      2, TYPE_STR,  false, true },
+    {"len",         0, TYPE_INT,   false, false, false, false},
+    {"at",          1, TYPE_INT,   false, true,  false, false},
+    {"find",        1, TYPE_INT,   true,  false, false, false},
+    {"count",       1, TYPE_INT,   true,  false, false, false},
+    {"is_empty",    0, TYPE_BOOL,  false, false, false, false},
+    {"contains",    1, TYPE_BOOL,  true,  false, false, false},
+    {"starts_with", 1, TYPE_BOOL,  true,  false, false, false},
+    {"ends_with",   1, TYPE_BOOL,  true,  false, false, false},
+    {"upper",       0, TYPE_STR,   false, false, false, false},
+    {"lower",       0, TYPE_STR,   false, false, false, false},
+    {"trim",        0, TYPE_STR,   false, false, false, false},
+    {"replace",     2, TYPE_STR,   true,  false, false, false},
+    {"reverse",     0, TYPE_STR,   false, false, false, false},
+    {"repeat",      1, TYPE_STR,   false, true,  false, false},
+    {"substr",      2, TYPE_STR,   false, true,  false, false},
+    {"format",      0, TYPE_STR,   false, false, true,  false},
+    {"join",        1, TYPE_STR,   false, false, false, true },
+    {"split",       1, TYPE_SLICE, true,  false, false, false},
 };
 
 static const str_method_entry *str_method_lookup(const char *name) {
@@ -316,6 +321,7 @@ typedef struct {
 
 static tess_type type_from_name(tess_sema *s, const char *name,
                                 tess_class **out_cls);
+static tess_type infer_expr_type(tess_sema *s, tess_expr *e);
 static tess_field *class_find_field(tess_class *cls, const char *name);
 static tess_method *class_find_method(tess_class *cls, const char *name);
 static tess_class *receiver_class(tess_sema *s, tess_expr *obj);
@@ -617,6 +623,30 @@ static const char *array_type_of_expr(tess_sema *s, tess_expr *e) {
     return NULL;
 }
 
+static bool is_string_sequence(tess_sema *s, tess_expr *expr) {
+    if (expr == NULL) return false;
+    if (expr->kind == TESS_EXPR_ARRAY) {
+        for (size_t i = 0; i < expr->as.array.count; i++)
+            if (infer_expr_type(s, expr->as.array.items[i]) != TYPE_STR)
+                return false;
+        return true;
+    }
+    if (expr->kind == TESS_EXPR_SLICE)
+        return is_string_sequence(s, expr->as.slice.object);
+    if (expr->kind == TESS_EXPR_CALL &&
+        expr->as.call.callee != NULL &&
+        expr->as.call.callee->kind == TESS_EXPR_MEMBER &&
+        expr->as.call.callee->as.member.name != NULL &&
+        strcmp(expr->as.call.callee->as.member.name, "split") == 0)
+        return true;
+    const char *type = array_type_of_expr(s, expr);
+    if (type == NULL) return false;
+    if (strncmp(type, "slice[", 6) == 0) type += 6;
+    size_t len = strcspn(type, "[*]");
+    return (len == 3 && strncmp(type, "str", len) == 0) ||
+           (len == 6 && strncmp(type, "string", len) == 0);
+}
+
 static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
     if (e == NULL) return TYPE_INT; // Default fallback
     
@@ -633,6 +663,15 @@ static tess_type infer_expr_type(tess_sema *s, tess_expr *e) {
         case TESS_EXPR_INDEX: {
             const char *source = array_type_of_expr(s, e->as.index.object);
             if (source != NULL) {
+                if (strncmp(source, "slice[", 6) == 0) {
+                    const char *base = source + 6;
+                    size_t n = strcspn(base, "]");
+                    char element[128];
+                    if (n >= sizeof element) n = sizeof element - 1;
+                    memcpy(element, base, n);
+                    element[n] = '\0';
+                    return type_from_name(s, element, NULL);
+                }
                 const char *open = strchr(source, '[');
                 if (open != NULL) {
                     const char *close = strchr(open, ']');
@@ -1398,13 +1437,22 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                         report(s, callee->start, callee->end, msg);
                         return false;
                     }
-                    if (e->as.call.arg_count != sm->arity) {
+                    if ((!sm->variadic && e->as.call.arg_count != sm->arity) ||
+                        (sm->variadic && e->as.call.arg_count < sm->arity)) {
                         char msg[256];
-                        snprintf(msg, sizeof msg,
-                                 "`str.%s` expects %zu argument%s, got %zu",
-                                 mname, sm->arity,
-                                 sm->arity == 1 ? "" : "s",
-                                 e->as.call.arg_count);
+                        if (sm->variadic) {
+                            snprintf(msg, sizeof msg,
+                                     "`str.%s` expects at least %zu argument%s, got %zu",
+                                     mname, sm->arity,
+                                     sm->arity == 1 ? "" : "s",
+                                     e->as.call.arg_count);
+                        } else {
+                            snprintf(msg, sizeof msg,
+                                     "`str.%s` expects %zu argument%s, got %zu",
+                                     mname, sm->arity,
+                                     sm->arity == 1 ? "" : "s",
+                                     e->as.call.arg_count);
+                        }
                         report(s, e->start, e->end, msg);
                         return false;
                     }
@@ -1412,6 +1460,19 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                         tess_expr *arg = e->as.call.args[i];
                         if (arg == NULL) continue;
                         tess_type arg_type = infer_expr_type(s, arg);
+                        if (sm->slice_arg && (arg_type != TYPE_SLICE ||
+                                              !is_string_sequence(s, arg))) {
+                            report(s, arg->start, arg->end,
+                                   "`str.join` expects a slice or array of strings");
+                            return false;
+                        }
+                        if (sm->variadic &&
+                            (arg_type == TYPE_SLICE || arg_type == TYPE_RECORD ||
+                             arg_type == TYPE_CLASS)) {
+                            report(s, arg->start, arg->end,
+                                   "`str.format` arguments must be scalar values");
+                            return false;
+                        }
                         if (sm->str_args && arg_type != TYPE_STR) {
                             char msg[256];
                             snprintf(msg, sizeof msg,
@@ -1852,10 +1913,17 @@ static bool check_stmt(tess_sema *s, tess_stmt *st) {
                     if (record_name != NULL)
                         scope_lookup_own(s->scope, target->as.ident)->record_name = record_name;
                     if (st->as.assign.declared_type != NULL &&
-                        strchr(st->as.assign.declared_type, '[') != NULL &&
-                        strncmp(st->as.assign.declared_type, "slice[", 6) != 0)
+                        strchr(st->as.assign.declared_type, '[') != NULL)
                         scope_lookup_own(s->scope, target->as.ident)->array_type =
                             st->as.assign.declared_type;
+                    if (st->as.assign.declared_type == NULL &&
+                        value->kind == TESS_EXPR_CALL &&
+                        value->as.call.callee != NULL &&
+                        value->as.call.callee->kind == TESS_EXPR_MEMBER &&
+                        value->as.call.callee->as.member.name != NULL &&
+                        strcmp(value->as.call.callee->as.member.name, "split") == 0)
+                        scope_lookup_own(s->scope, target->as.ident)->array_type =
+                            "slice[str]";
                 } else if (visible == NULL || visible->kind != SYM_VAR) {
                     tess_type var_type = infer_expr_type(s, value);
                     tess_class *var_cls = NULL;
