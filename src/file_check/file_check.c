@@ -2,13 +2,8 @@
 
 #include <string.h>
 #include <stdio.h>
-#include <unistd.h>
 
 #include "constants.h"
-
-static bool file_access(const char* path) {
-    return access(path, F_OK) == 0;
-}
 
 static bool has_valid_extension(const char* path) {
     static const char* const valid_extensions_list[] = {
@@ -27,17 +22,18 @@ static bool has_valid_extension(const char* path) {
 }
 
 FILE* file_open(const char* path) {
-    if (!file_access(path)) {
-        ERRFLN(ERR_FILE_UNABLE_ACCESS, path);
+    if (path == NULL) {
         return NULL;
     }
-    
+
     if (!has_valid_extension(path)) {
         ERRFLN(ERR_INVALID_EXTENSION, path);
         return NULL;
     }
-    
-    FILE* file = fopen(path, "r");
+
+    // Binary mode keeps file sizes and line endings identical on every
+    // platform (no CRLF translation on Windows).
+    FILE* file = fopen(path, "rb");
     if (!file) {
         ERRFLN(ERR_FILE_UNABLE_ACCESS, path);
         return NULL;

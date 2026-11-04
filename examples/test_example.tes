@@ -1,0 +1,16 @@
+// Code in Tesseract
+Test {
+    value: int;
+
+    init(v: int) {
+        self.value = v;
+    }
+
+    double_value: int {
+        return self.value * 2;
+    }
+}
+
+let t = Test.new;
+t.value = 5;
+put(t.double_value);

@@ -5,75 +5,279 @@
 
 #include "constants.h"
 
-cmd_data parse_cmd(int *argc, char* argv[]) {
+static void set_error(cmd_data *data) {
+    data->action = ERROR;
+}
+
+/* Options recognized in the separated form (`-o <value>`); a value that
+ * exactly matches one of these is treated as a missing value rather than
+ * a path, so a typo like `-o --stdout` stays an error. */
+static const char *const known_options[] = {
+    "-h", "--help", "-v", "--version", "-c", "--check", "--stdout",
+    "--compile", "--freestanding", "-b", "--build", "-o", "--output",
+    "--cc", "--target", "--quiet", "--", NULL
+};
+
+/* Consume the value of an option given in the separated form. Values
+ * starting with `-` are accepted, so paths literally named `-foo` are
+ * spellable; the `--output=<value>` form remains the unambiguous
+ * alternative. */
+static bool take_value(int *i, int argc, char *argv[], const char *missing_msg,
+                       char **out) {
+    if (*i + 1 >= argc) {
+        ERRLN(missing_msg);
+        return false;
+    }
+    char *value = argv[*i + 1];
+    for (size_t k = 0; known_options[k] != NULL; k++) {
+        if (strcmp(value, known_options[k]) == 0) {
+            ERRFLN(ERR_BAD_ARGUMENT, value);
+            return false;
+        }
+    }
+    *out = value;
+    (*i)++;
+    return true;
+}
+
+static bool set_path(cmd_data *data, char *path) {
+    if (data->path != NULL) {
+        ERRLN(ERR_MULTIPLE_BUILD);
+        return false;
+    }
+    data->path = path;
+    return true;
+}
+
+static bool set_output(cmd_data *data, char *output) {
+    if (data->output != NULL) {
+        ERRLN(ERR_MULTIPLE_OUTPUT);
+        return false;
+    }
+    data->output = output;
+    return true;
+}
+
+cmd_data parse_cmd(int argc, char* argv[]) {
     cmd_data data;
-    data.action = BUILD_FILE;
+    data.action = HELP;
     data.path = NULL;
     data.output = NULL;
+    data.c_compiler = NULL;
+    data.target_triple = NULL;
+    data.check_only = false;
+    data.to_stdout = false;
+    data.compile = false;
+    data.freestanding = false;
+    data.safe = false;
+    data.quiet = false;
 
-    if (*argc <= 1) {
+    if (argc <= 1) {
         data.action = HELP;
         return data;
     }
 
-    for (int i = 1; i < *argc; i++) {
-        if (argv[i][0] != '-') {
-            if (data.path == NULL) {
-                data.path = argv[i];
-                continue;
-            } else {
-                ERRFLN(ERR_BAD_ARGUMENT, argv[i]);
-                data.action = ERROR;
-                return data;
-            }
+    bool want_help = false;
+    bool want_version = false;
+    bool end_of_options = false;
+
+    for (int i = 1; i < argc; i++) {
+        char *arg = argv[i];
+        if (arg == NULL) {
+            ERRLN(TERRA_ARGS_ERROR);
+            set_error(&data);
+            return data;
         }
 
-        if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
-            data.action = VERSION;
-            return data;
-        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            data.action = HELP;
-            return data;
-        } else if (strcmp(argv[i], "--tesseract") == 0) {
-            data.action = ANIMATION;
-            return data;
-        } else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--build") == 0) {
-            if (data.path != NULL) {
-                ERRLN(ERR_MULTIPLE_BUILD);
-                data.action = ERROR;
-                return data;
-            } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
-                data.path = argv[i + 1];
-                i++;
+        if (!end_of_options && strcmp(arg, "--") == 0) {
+            end_of_options = true;
+            continue;
+        }
+
+        /* Options (anything that starts with '-' and is not just "-"). */
+        if (!end_of_options && arg[0] == '-' && arg[1] != '\0') {
+            if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+                want_help = true;
                 continue;
-            } else {
-                ERRLN(ERR_BUILD_FILE_NOT_SPECIFIED);
-                data.action = ERROR;
-                return data;
             }
-        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
-            if (data.output != NULL) {
-                ERRLN(ERR_MULTIPLE_OUTPUT);
-                data.action = ERROR;
-                return data;
-            } else if (i + 1 < *argc && argv[i + 1][0] != '-') {
-                data.output = argv[i + 1];
-                i++;
+            if (strcmp(arg, "-v") == 0 || strcmp(arg, "-V") == 0 ||
+                strcmp(arg, "--version") == 0) {
+                want_version = true;
                 continue;
-            } else {
-                ERRLN(ERR_OUTPUT_FILE_NOT_SPECIFIED);
-                data.action = ERROR;
-                return data;
             }
-        } else {
-            ERRFLN(ERR_BAD_ARGUMENT, argv[i]);
-            data.action = ERROR;
+            if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
+                data.quiet = true;
+                continue;
+            }
+            if (strcmp(arg, "-c") == 0 || strcmp(arg, "--check") == 0) {
+                data.check_only = true;
+                continue;
+            }
+            if (strcmp(arg, "--stdout") == 0) {
+                data.to_stdout = true;
+                continue;
+            }
+            if (strcmp(arg, "--compile") == 0) {
+                data.compile = true;
+                continue;
+            }
+            if (strcmp(arg, "--freestanding") == 0) {
+                data.freestanding = true;
+                continue;
+            }
+            if (strcmp(arg, "--safe") == 0) {
+                data.safe = true;
+                continue;
+            }
+            if (strcmp(arg, "-b") == 0 || strcmp(arg, "--build") == 0) {
+                char *value = NULL;
+                if (!take_value(&i, argc, argv,
+                                ERR_BUILD_FILE_NOT_SPECIFIED, &value)) {
+                    set_error(&data);
+                    return data;
+                }
+                if (!set_path(&data, value)) {
+                    set_error(&data);
+                    return data;
+                }
+                continue;
+            }
+            if (strncmp(arg, "--build=", 8) == 0) {
+                if (arg[8] == '\0') {
+                    ERRLN(ERR_BUILD_FILE_NOT_SPECIFIED);
+                    set_error(&data);
+                    return data;
+                }
+                if (!set_path(&data, arg + 8)) {
+                    set_error(&data);
+                    return data;
+                }
+                continue;
+            }
+            if (strcmp(arg, "-o") == 0 || strcmp(arg, "--output") == 0) {
+                char *value = NULL;
+                if (!take_value(&i, argc, argv,
+                                ERR_OUTPUT_FILE_NOT_SPECIFIED, &value)) {
+                    set_error(&data);
+                    return data;
+                }
+                if (!set_output(&data, value)) {
+                    set_error(&data);
+                    return data;
+                }
+                continue;
+            }
+            if (strcmp(arg, "--cc") == 0) {
+                char *value = NULL;
+                if (!take_value(&i, argc, argv, ERR_OUTPUT_FILE_NOT_SPECIFIED,
+                                &value)) {
+                    set_error(&data);
+                    return data;
+                }
+                data.c_compiler = value;
+                continue;
+            }
+            if (strcmp(arg, "--target") == 0) {
+                char *value = NULL;
+                if (!take_value(&i, argc, argv, "Target triple not specified", &value)) {
+                    set_error(&data);
+                    return data;
+                }
+                if (value[0] == '\0' || data.target_triple != NULL) {
+                    ERRLN("Target triple must be non-empty and specified once");
+                    set_error(&data);
+                    return data;
+                }
+                data.target_triple = value;
+                continue;
+            }
+            if (strncmp(arg, "--target=", 9) == 0) {
+                if (arg[9] == '\0' || data.target_triple != NULL) {
+                    ERRLN("Target triple must be non-empty and specified once");
+                    set_error(&data);
+                    return data;
+                }
+                data.target_triple = arg + 9;
+                continue;
+            }
+            if (strncmp(arg, "--output=", 9) == 0) {
+                if (arg[9] == '\0') {
+                    ERRLN(ERR_OUTPUT_FILE_NOT_SPECIFIED);
+                    set_error(&data);
+                    return data;
+                }
+                if (!set_output(&data, arg + 9)) {
+                    set_error(&data);
+                    return data;
+                }
+                continue;
+            }
+
+            ERRFLN(ERR_BAD_ARGUMENT, arg);
+            set_error(&data);
+            return data;
+        }
+
+        /* Positional source path. */
+        if (!set_path(&data, arg)) {
+            set_error(&data);
             return data;
         }
     }
 
-    if (data.output == NULL) {
-        data.output = "output";
+    if (want_version) {
+        data.action = VERSION;
+    } else if (want_help) {
+        data.action = HELP;
+    } else if (data.path != NULL) {
+        data.action = BUILD_FILE;
+    } else if (data.check_only || data.output != NULL || data.to_stdout ||
+               data.compile || data.c_compiler != NULL || data.target_triple != NULL ||
+               data.freestanding || data.safe) {
+        ERRLN(ERR_BUILD_FILE_NOT_SPECIFIED);
+        set_error(&data);
+    } else {
+        data.action = HELP;
+    }
+
+    if (data.action != BUILD_FILE) {
+        return data;
+    }
+
+    /* `-o -` is shorthand for writing the generated C to stdout. */
+    if (data.output != NULL && strcmp(data.output, "-") == 0) {
+        data.output = NULL;
+        data.to_stdout = true;
+    }
+
+    if (data.check_only && data.to_stdout) {
+        ERRLN(ERR_CHECK_STDOUT_CONFLICT);
+        set_error(&data);
+        return data;
+    }
+    if (data.compile && (data.check_only || data.to_stdout)) {
+        ERRLN("--compile cannot be combined with --check or --stdout");
+        set_error(&data);
+        return data;
+    }
+    if (!data.compile && data.c_compiler != NULL) {
+        ERRLN("--cc requires --compile");
+        set_error(&data);
+        return data;
+    }
+    if ((data.target_triple != NULL || data.freestanding) && !data.compile) {
+        ERRLN("--target and --freestanding require --compile");
+        set_error(&data);
+        return data;
+    }
+    if (data.check_only && data.output != NULL) {
+        ERRLN(ERR_CHECK_OUTPUT_CONFLICT);
+        set_error(&data);
+        return data;
+    }
+
+    if (!data.check_only && !data.to_stdout && data.output == NULL) {
+        data.output = data.freestanding ? "terra.o" : data.compile ? "a.out" : "output";
     }
 
     return data;

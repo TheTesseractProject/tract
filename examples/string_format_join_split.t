@@ -1,0 +1,13 @@
+let parts = "alpha,,gamma".split(",");
+put(parts[0]);
+put("|".join(parts));
+put("value=%lld, rate=%.1f, text=%s".format(42, 2.5, "ok"));
+put(",".join(["x", "y"]));
+let fixed: str[2] = ["left", "right"];
+put("/".join(fixed[0:2]));
+let fixed_slice: slice[str] = fixed[0:2];
+put("~".join(fixed_slice));
+put("plain".format());
+let empty = "".split("");
+put(len(empty));
+put("".join(empty));

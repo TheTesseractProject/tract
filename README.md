@@ -1,15 +1,9 @@
 ![logo](logo.png)
-# TRACT - Tesseract Compiler
+# Terra - Tesseract Compiler
+a fork based on https://github.com/TheTesseractProject/tract
 
-[![GitHub Release](https://img.shields.io/github/v/release/TheTesseractProject/tract?style=plastic)](https://github.com/TheTesseractProject/tract/releases)
-[![GitHub Downloads](https://img.shields.io/github/downloads/TheTesseractProject/tract/total?style=plastic)](https://github.com/TheTesseractProject/tract/releases)
-[![GitHub code size](https://img.shields.io/github/languages/code-size/TheTesseractProject/tract?style=plastic)](https://github.com/TheTesseractProject/tract)
-[![GitHub lines of code](https://tokei.rs/b1/github/TheTesseractProject/tract)](https://github.com/TheTesseractProject/tract)
-[![CMake](https://img.shields.io/badge/CMake-3.16+-blue.svg?style=plastic)](https://cmake.org/)
-[![C Standard](https://img.shields.io/badge/C-23-blue.svg?style=plastic)](https://en.wikipedia.org/wiki/C23_(C_standard_revision))
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/TheTesseractProject/tract)
-
-> **TRACT** - Lightning-fast Tesseract language compiler with aggressive optimization for peak performance. Tesseract is simple but with great power.
+> *Terra* is one of the implementations of the Tesseract language.
+> At this time, this implementation may not comply with Tesseract standards.
 
 > [!WARNING]
 > This project is currently under active development. Features and documentation may change frequently. At the moment the language is not ready for full-fledged work, it is a prototype.
@@ -23,7 +17,7 @@ TesseractClass {
     }
 }
 
-Class = TesseractClass.init;
+Class = TesseractClass.new;
 Class.hi;
 ```
 
@@ -39,6 +33,55 @@ Hello there!
 - **Cross-platform**: Works on Linux, macOS, and Windows
 - **Modern C**: Written in C23 with best practices
 - **Error Handling**: Comprehensive error reporting
+
+## 🧩 Language Notes (current prototype)
+
+- Classes declare fields (`name: type;`) and methods (`name { ... }` or
+  `name(args: type) { ... }`).
+- `Class.new` allocates a zeroed instance; `Class.init(args)` allocates one and
+  calls `init`.
+- A field whose type is a user-defined class is a pointer to an instance, so a
+  class may reference another class declared later in the same file.
+- Methods can be called with or without parentheses (`obj.run;` is `obj.run()`).
+- `let name = value;` explicitly declares a variable. Existing assignment syntax
+  remains available for updates and backwards compatibility.
+- `fn main() { ... }` is the application entry point. A program without it keeps
+  script-style top-level execution.
+- C-style `for` loops accept declarations, conditions, and assignment steps:
+  `for (let i = 0; i < limit; i = i + 1) { ... }`; `break;` and `continue;`
+  work inside both `for` and `while` loops.
+- Top-level `link "library";` adds a native linker dependency when using
+  `--compile` (for example, `link "sqlite3";` becomes `-lsqlite3`).
+- Built-ins: `put`, `print`, `len`, `str`, `int`, `float`, `assert`, `input`.
+- Builtin string methods (Python-flavoured standard library): `len`, `at`
+  (bounds-checked), `find`, `count`, `is_empty`, `contains`, `starts_with`,
+  `ends_with`, `upper`, `lower`, `trim`, `replace`, `reverse`, `repeat` and
+  `substr`, plus printf-style `format`, `join` and `split`. Methods chain
+  naturally: `s.trim().upper()`. `separator.join(values)` accepts a string
+  array or slice, and `split` returns an indexable `slice[str]`. Formatting
+  uses C `printf` conversion rules. Methods that build a new string allocate;
+  `at` panics on an out-of-range index.
+- The native `math` module wraps C99 `<math.h>`: `@math.sqrt`, `@math.pow`,
+  `@math.floor`, `@math.ceil`, `@math.round`, `@math.abs`, `@math.min`,
+  `@math.max`, `@math.exp`, `@math.log`. Unknown members are compile-time
+  errors, not link errors.
+- `--safe` runtime checking: with the flag, integer `+ - * / %` overflow and
+  division by zero panic with a `runtime error:` message, and array/slice
+  indexing is bounds-checked. Float math and pointer arithmetic stay
+  unchecked.
+- Native interop: `import "stdio.h"; extern fn printf(format: str, ...): i32;`
+  followed by ordinary `printf(...)` calls. Existing `@c.printf(...)` and
+  `@math.sqrt(...)` calls remain available.
+- C ABI types include `i8`/`u8` through `i64`/`u64`, `usize`, `isize`, `ptr`,
+  and explicit aliases such as `c_int` and `c_ulong`. Unknown identifier types
+  in an `extern fn` signature are opaque C typedefs; `FILE` maps to `FILE*`.
+- Systems features include fixed arrays (`let a: i32[4] = [1, 2, 3, 4];`),
+  typed slices (`let view: slice[i32] = a[1:3];`), indexing, pointer types
+  (`i32*`), `&` and `*`, C-layout `struct` and `union` declarations with
+  aggregate initializers, and `volatile` qualified types.
+- `asm("instruction");` and `asm volatile("instruction");` emit GNU-style
+  inline assembly templates. Assembly constraints and operands are not yet
+  represented by source syntax.
 
 ## 📋 Requirements
 
@@ -56,8 +99,8 @@ Hello there!
 ### Quick Start (Recommended)
 ```bash
 # Clone the repository
-git clone https://github.com/TheTesseractProject/tract.git
-cd tract
+git clone https://github.com/nazar-ponomarenko-dots/Terra
+cd Terra
 ```
 
 ```bash
@@ -76,7 +119,7 @@ cmake --build build
 
 ```bash
 # Run the application
-./bin/tract --help
+./bin/terra --help
 ```
 
 ### Clean Build
@@ -90,30 +133,113 @@ rm -rf bin/ build/
 
 ```bash
 # Show help
-./bin/tract --help
+./bin/terra --help
 
 # Show version
-./bin/tract --version
+./bin/terra --version
 
-# Build a file
-./bin/tract input.tt
+# Translate a file to C (writes ./output by default)
+./bin/terra input.tt
 
-# Build with custom output
-./bin/tract input.tt -o output
+# Translate with a custom output path
+./bin/terra input.tt -o output.c
 
-# Show tesseract animation
-./bin/tract --tesseract
+# Only parse and type-check
+./bin/terra --check input.tt
+
+# Write the generated C to stdout
+./bin/terra input.tt --stdout
+
 ```
+
+> Terra emits C99-style source that uses a few GNU extensions (`__auto_type`,
+> statement expressions) for assign-to-declare and `Class.init(...)`. Build the
+> result with GCC/Clang in GNU mode, e.g. `cc output.c -o program`.
+
+### Native C headers and libraries
+
+Import a system header directly. `extern fn` gives the call a checked Tesseract
+signature and emits a C prototype; the included header lets the C compiler
+check that prototype against the library declaration:
+
+```tesseract
+import "stdio.h";
+extern fn printf(format: str, ...): i32;
+
+let value = 42;
+printf("value = %lld\n", value);
+```
+
+```sh
+./bin/terra examples/c_import.t -o /tmp/c_import.c
+cc /tmp/c_import.c -o /tmp/c_import
+```
+
+For libraries that need a linker flag, pass it to the C compiler when building
+the generated source, for example `cc app.c -lsqlite3 -o app`, or declare it in
+the source and use the executable build mode:
+
+```tesseract
+import "sqlite3.h" as sqlite;
+link "sqlite3";
+```
+
+```sh
+./bin/terra app.t --compile -o app
+```
+
+`--compile` invokes the selected compiler directly, without a shell, and
+publishes the executable only after a successful compile. Select another
+compiler with `--cc /path/to/cc`. Header names and library names are validated.
+Variadic calls follow the C ABI, including C's default argument promotions and
+format-string rules.
+
+Cross-compilation passes a target triple to Clang:
+
+```sh
+terra app.t --compile --cc clang --target aarch64-unknown-linux-gnu -o app
+```
+
+`--freestanding` emits a relocatable object (`terra.o` by default) without a
+hosted runtime prelude or system link step. Functions, records, arrays, slices,
+pointers, and inline assembly are supported. Hosted built-ins, Terra classes,
+and executable top-level statements are rejected in this mode. Startup code,
+the linker script, and the platform runtime are supplied when linking:
+
+```sh
+terra kernel.t --compile --cc clang --target x86_64-unknown-none-elf \
+  --freestanding -o kernel.o
+```
+
+An opaque C typedef can be used without exposing its layout:
+
+```tesseract
+import "stdio.h";
+extern fn fopen(path: str, mode: str): FILE;
+extern fn fputs(text: str, stream: FILE): i32;
+extern fn fclose(stream: FILE): i32;
+```
+
+See [c_file.t](/home/votbotcot/Terra/examples/c_file.t) for a complete example.
+File-based Tesseract module imports remain unsupported. The executable build
+mode is currently POSIX-only; C source generation remains available on all
+supported platforms.
 
 ### Command Line Options
 
 | Option | Long Option | Description |
 |--------|-------------|-------------|
 | `-h` | `--help` | Show help information |
-| `-v` | `--version` | Show version information |
-| `-b` | `--build` | Build the specified file |
-| `-o` | `--output` | Specify output file path |
-| | `--tesseract` | Show ASCII tesseract animation |
+| `-v`, `-V` | `--version` | Show version and build information |
+| `-b` | `--build` | Compile the specified file (path may also be positional) |
+| `-o` | `--output` | Output path; `-` means stdout (`--output=path` also works) |
+| `-c` | `--check` | Parse and type-check only, do not generate C |
+| | `--stdout` | Write generated C to standard output |
+| | `--compile` | Compile generated C into an executable |
+| | `--cc <path>` | Select compiler for `--compile` |
+| | `--safe` | Runtime-check arithmetic and indexing (panic instead of UB) |
+| `-q` | `--quiet` | Suppress progress messages |
+| | `--` | Treat all following arguments as paths |
 
 ### Supported File Extensions
 
@@ -162,10 +288,10 @@ This project is licensed under the terms specified in the [LICENSE](LICENSE) fil
 
 If you encounter any issues or have questions:
 
-1. Check the [Issues](https://github.com/TheTesseractProject/tract/issues) page
+1. Check the [Issues](https://github.com/nazar-ponomarenko-dots/Terra/issues) page
 2. Create a new issue with detailed information
 3. Include your system information and error messages
 
 ---
 
-**TRACT** - Where mathematics meets performance! 🚀 
+**Terra** - Where mathematics meets performance! 🚀
