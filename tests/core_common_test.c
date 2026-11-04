@@ -369,34 +369,62 @@ static void test_diagnostics_window(void) {
 }
 
 static void test_diagnostics_misc(void) {
-    check(core_get_hint("unsupported keyword `class`") != NULL, "hint class");
-    check(core_get_hint("unsupported keyword `int` in statement position") != NULL,
-          "hint generic keyword");
-    check(core_get_hint("unknown function `f`") != NULL, "hint unknown function");
-    check(core_get_hint("expects exactly 2 arguments") != NULL, "hint arity");
-    check(core_get_hint("the parser invents nothing here") == NULL, "no invented hint");
+    struct {
+        const char *message;
+        const char *hint_fragment;
+    } cases[] = {
+        {"expected `;` after an expression, found 'put'",
+         "add the missing `;`"},
+        {"unexpected character", "check for a typo or unsupported character"},
+        {"undefined name `missing`", "declare the variable before using it"},
+        {"undefined function `missing`", "declare the function with `fn`"},
+        {"`put` expects exactly 1 argument, got 2", "single value"},
+        {"math has no function `sqr`", "supported functions include"},
+        {"division by zero", "make the divisor non-zero"},
+        {"unknown escape sequence", "use a supported escape"},
+        {"indexing requires an array, slice, string, or pointer",
+         "index only an array, slice, string, or pointer"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        const char *hint = core_get_hint(cases[i].message);
+        check(hint != NULL, "Terra diagnostic has a hint");
+        if (hint != NULL) {
+            check(strstr(hint, cases[i].hint_fragment) != NULL,
+                  "Terra hint is relevant to its diagnostic");
+        }
+    }
+    check(core_get_hint("unsupported keyword `class`") == NULL,
+          "removed stale hint about unsupported classes");
+    check(core_get_hint("unsupported string interpolation") == NULL,
+          "removed stale hint about string interpolation");
+    check(core_get_hint("the parser invents nothing here") == NULL,
+          "no invented hint");
 
-    const char *src = "<?php class A {} ?>";
-    core_located *at = core_locate(src, (core_span){6, 11}, "unsupported keyword `class`");
-    char *block = core_format_block("a.php", "unsupported keyword `class`", at);
+    const char *src = "put(\"hello\") put(\"world\");";
+    const char *error = "expected `;` after an expression, found 'put'";
+    const char *second_call = strstr(src, "put(\"world\")");
+    core_located *at = core_locate(
+        src, (core_span){(uint32_t)(second_call - src),
+                         (uint32_t)(second_call - src + 3)}, error);
+    char *block = core_format_block("missing-semi.t", error, at);
     check(block != NULL, "block with hint");
     if (block) {
-        check(strstr(block,
-                     "  = note: this language has no classes; functions, arrays "
-                     "and scalars only.\n") != NULL,
-              "specific hint wins");
+        check(strstr(block, "missing-semi.t:1:14: error:") != NULL,
+              "Terra diagnostic location");
+        check(strstr(block, "  = note: add the missing `;`") != NULL,
+              "Terra diagnostic prints actionable hint");
     }
     core_free(block);
 
     core_json_value *doc = core_diagnostics_json(
-        "group.php", "expected `)`",
+        "missing-semi.t", error,
         (core_located *)at);
     char *rendered = core_json_render(doc);
     check(rendered != NULL, "diagnostics json renders");
     if (rendered) {
-        check(strstr(rendered, "\"line\":1,\"column\":7") != NULL,
+        check(strstr(rendered, "\"line\":1,\"column\":14") != NULL,
               "diagnostics json line/column");
-        check(strstr(rendered, "\"excerpt\":\"<?php class A {} ?>\"") != NULL,
+        check(strstr(rendered, "\"excerpt\":\"put(\\\"hello\\\") put(\\\"world\\\");\"") != NULL,
               "diagnostics json excerpt");
         check(strstr(rendered, "\"windowed\":false") != NULL,
               "diagnostics json windowed");
