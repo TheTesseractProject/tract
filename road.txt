@@ -1,6 +1,0 @@
-[] - Stdlib: `split(sep)` returning a slice of substrings and `join(slice, sep)`, so string round-trips work without a list type.
-[] - Stdlib: `int_from_str`/`float_from_str` variants that report parse failure (return bool + out value or a sentinel), replacing the silent-zero behavior of `int("garbage")`.
-[] - Sema: validate `@c`/`@std` module members against the imported headers' known set, like math already does, so typos fail at compile time.
-[] - Codegen: apply --safe checked arithmetic to compound assignments (`x += y`) and to arguments passed to user functions when they cross a trust boundary.
-[] - Tests: e2e coverage for `--safe` in-bounds execution of every array/slice example (compile all examples twice: default and --safe).
-[] - Build: decide the fate of `CORE_NO_STDIO` (defined for EMBEDDED but consumed by no core source).
